@@ -1,7 +1,8 @@
 # Phase 0 database migration matrix
 
-> Inventory snapshot of every SQL file currently under `supabase/` (82 files,
-> including account lifecycle hardening and Google auth profile RPC recovery).
+> Inventory snapshot of every SQL file currently under `supabase/` (84 files,
+> including account lifecycle hardening, commission integration, and Google
+> auth profile RPC recovery).
 > This is repository source inventory, not a production migration ledger. No
 > SQL was applied to a remote database in this review.
 
@@ -42,6 +43,46 @@ commission can start. Reapply it after any later function or grant
 replacement. The complete release gate and
 front-end sequence are in [PHASE0-DEPLOYMENT-RECOVERY.md](./PHASE0-DEPLOYMENT-RECOVERY.md).
 
+### Account lifecycle and commission integration
+
+For the existing production database, do not replay the payment foundation or
+other feature foundations solely to satisfy lifecycle prerequisites. First
+confirm the required tables already exist with RLS enabled, including
+`artist_commission_services`, `commission_payments`, and `storage.objects`.
+The payment foundation SQL lists lifecycle as a prerequisite while the
+lifecycle migration requires the payment table; if that table is absent, stop
+and resolve the fresh-install dependency cycle rather than applying either
+file speculatively.
+
+After confirming the current service owner/read policies and owner-checked
+service RPCs, use this order for missing forward migrations:
+
+1. Apply or confirm the latest commission request/selection definitions:
+   `commission-request-concurrency-hardening.sql` and
+   `commission-post-symmetric-selection.sql`.
+2. Apply or confirm the current payment coordination/refund definitions, then
+   `commission-payment-simulation-lockdown.sql` after all payment RPC/grant
+   replacements.
+3. Apply `account-lifecycle-hardening.sql`. It aborts transactionally if any
+   required base table is missing or RLS is disabled. It deactivates service
+   listings without deleting them and blocks deactivation while a cancelled
+   paid payment still awaits the existing simulated refund.
+4. Apply `account-lifecycle-commission-integration.sql`. Its insert trigger
+   rejects new commissions if either participant lacks active lifecycle state
+   or has a pending, in-review, or approved deletion request. Existing
+   commissions and transitions are untouched.
+5. Apply `account-deletion-admin-review.sql` after
+   `profile-access-expand.sql` and its trusted Admin helper.
+6. Verify tables, restrictive policies, trigger attachment/enabled state,
+   function definitions and grants, then exercise the complete flow in
+   staging before a controlled production rollout.
+
+The base lifecycle migration now retains `IN_REVIEW` in its status check,
+unique-open-request index, and write/request checks, so rerunning it after the
+Admin review migration does not erase that workflow state. The PGlite suite
+applies the actual relevant migration SQL and checks that compatibility;
+PGlite results do not prove production RLS, Storage, Auth, or provider behavior.
+
 `google-auth-profile-rpc-recovery.sql` is a conditional recovery, not a routine
 Phase 0 step. Use it only after a read-only diagnostic confirms that the
 profile RPC is absent. It restores the approved profile and Google-role RPCs
@@ -60,7 +101,7 @@ in the setup guide; and chat/commission corrections after their canonical
 foundation functions. Dependencies not explicitly named in a SQL header are
 **UNVERIFIED** until validated against the target schema.
 
-**Do not execute the 81 files alphabetically or as a batch.** On an existing
+**Do not execute the 84 files alphabetically or as a batch.** On an existing
 project, reconcile live objects and migration history first, apply only
 reviewed missing forward migrations, and validate every data backfill before
 execution.
@@ -100,7 +141,7 @@ behavior. Supabase CLI, Docker, and PostgreSQL client tools were unavailable;
 no remote connection or production SQL was attempted. Prior PGlite checks are
 isolated fixture tests, not live Supabase validation.
 
-## Complete SQL inventory (81 files)
+## Complete SQL inventory (84 files)
 
 | # | File | Category | Purpose (header) | Declared prerequisites | Objects and effects | Rerun / data risk |
 |---:|---|---|---|---|---|---|
@@ -181,11 +222,13 @@ isolated fixture tests, not live Supabase validation.
 | 75 | `real-commissions.sql` | Commissions | ArtGuard Hub — Batch 1A: real commission creation Run this ONCE in the Supabase SQL Editor, AFTER revision-requests.sql. | `revision-requests.sql` | functions: public.get_or_create_commission(p_order_ref text default null, p_counterparty_id uuid default null, p_title text default null); effects: ACL, function replacement | replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
 | 76 | `revision-requests.sql` | Commissions/revisions | ArtGuard Hub — Batch 1: Real Revision Request System Run this ONCE in the Supabase SQL Editor, after schema.sql / fix-direct-chat.sql. | `schema.sql`, `fix-direct-chat.sql` | created tables/columns: public.commissions (id, order_ref, client_id, artist_id, title, created_at, updated_at); public.revision_requests (id, commission_id, milestone_id, client_id, artist_id, description, status, response_text, created_at, updated_at); altered tables: public.commissions, public.revision_requests; functions: public.get_or_create_commission(p_order_ref text, p_counterparty_id uuid, p_title text); public.create_revision_request(p_commission_id uuid, p_description text); public.set_revision_status(p_revision_id uuid, p_status text, p_response_text text default null); triggers: commissions_set_updated_at ON public.commissions; revision_requests_set_updated_at ON public.revision_requests; policies: commission parties can read ON public.commissions; either party can create a commission link ON public.commissions; revision parties can read ON public.revision_requests; client can create their own revision request ON public.revision_requests; revision parties can update their own revision request ON public.revision_requests; effects: ACL, RLS/policy, migration-time DML/backfill, destructive change present, function replacement, policy replacement | data backfill/DML: verify row scope and rerun behavior; replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
 | 77 | `schema.sql` | Core schema | ArtGuard Hub Supabase/Postgres schema for real multi-user accounts, profiles, | UNVERIFIED: no explicit prerequisite comment found. | created tables/columns: public.profiles (id, name, username, role, bio, interests, avatar_data_url, onboarded, is_pro, last_seen_at, created_at, updated_at); public.conversations (id, created_at, updated_at); public.conversation_participants (conversation_id, user_id, joined_at); public.messages (id, conversation_id, sender_id, kind, text, image_name, image_variant, file_name, file_type, file_size, status, reaction, created_at); altered tables: public.profiles, public.conversations, public.conversation_participants, public.messages; functions: public.set_updated_at(); public.handle_new_user(); public.get_or_create_conversation(p_other_user_id uuid); triggers: profiles_set_updated_at ON public.profiles; conversations_set_updated_at ON public.conversations; on_auth_user_created ON auth.users; policies: authenticated users can read profiles ON public.profiles; users can update their own profile ON public.profiles; participants can read conversations ON public.conversations; participants can update conversations ON public.conversations; participants can read participant rows ON public.conversation_participants; users can add themselves to conversations ON public.conversation_participants; participants can read messages ON public.messages; participants can send messages ON public.messages; participants can update messages ON public.messages; effects: ACL, RLS/policy, migration-time DML/backfill, destructive change present, function replacement, policy replacement | data backfill/DML: verify row scope and rerun behavior; replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
-| 78 | `account-lifecycle-hardening.sql` | Account lifecycle | Adds caller-authorized reversible deactivation and private deletion requests without hard-deleting user data. | Profile, commission, payment, artwork, chat, notification, and Storage foundations | tables: public.account_lifecycle, public.account_deletion_requests; functions: public.ensure_account_lifecycle_row(), public.is_my_account_active(), public.is_my_account_writable(), public.assert_account_has_no_active_work(uuid), public.deactivate_my_account(), public.request_my_account_deletion(), public.guard_account_write(); triggers and restrictive account-state policies on protected tables and Storage; effects: ACL, RLS/policy, migration-time backfill, function replacement | Verify prerequisites, backfill, active-work checks, and policy behavior in staging; no hard-delete operation. |
+| 78 | `account-lifecycle-hardening.sql` | Account lifecycle | Adds fail-closed reversible deactivation and private deletion requests without hard-deleting user data; requires existing protected-table RLS, including artist commission services and Storage. | Profile, commission, payment, artwork, chat, notification, service, and Storage foundations | tables: public.account_lifecycle, public.account_deletion_requests; functions: public.ensure_account_lifecycle_row(), public.is_my_account_active(), public.is_my_account_writable(), public.assert_account_has_no_active_work(uuid), public.deactivate_my_account(), public.request_my_account_deletion(), public.guard_account_write(); service listing deactivation; write triggers and restrictive account-state policies; effects: ACL, RLS/policy, migration-time profile backfill, function replacement | Fail transaction if any required RLS is disabled; preserves existing rows; verify service discovery, refund gate, active work, and staging behavior. |
 | 79 | `google-auth-profile-rpc-recovery.sql` | Authentication | Restores the reviewed caller-only profile RPC and guarded Google signup-role RPC after a confirmed missing-function diagnostic. | Core `public.profiles` columns, `auth.uid()`, Supabase roles | functions: public.get_my_profile(), public.set_my_signup_role(p_role text); effects: ACL, function replacement; no profile table grants, policy changes, or profile-row DML | Idempotent function replacement and grants; run as trusted migration role and verify function owners and ACLs. |
 | 80 | `google-auth-get-my-profile-recovery.sql` | Authentication | Standalone recovery for public.get_my_profile() when the combined recovery file's expected RPC is still absent. | Core `public.profiles` table, `auth.uid()`, Supabase roles | function: public.get_my_profile(); effects: function replacement and function ACL only; no profile table grants, policy changes, data changes, or changes to set_my_signup_role(text) | Idempotent; run as trusted migration role, then verify owner, search_path, and function ACLs. |
 | 81 | `account-deletion-admin-review.sql` | Account lifecycle | Adds server-authorized review transitions, minimum-data Admin RPCs, and durable decision history for account deletion requests; approved requests are not deleted. | `account-lifecycle-hardening.sql`, `profile-access-expand.sql`, commission/payment/post foundations | table: public.account_deletion_request_reviews; status: adds IN_REVIEW; functions: public.list_account_deletion_requests_for_admin(), public.get_account_deletion_request_review(uuid), public.review_account_deletion_request(uuid, text, text); replaces lifecycle write/request guards to preserve open-request blocking; effects: ACL, RLS, function replacement | Additive and rerunnable; no direct authenticated audit access or permanent deletion. Verify Admin helper, active-work checks, audit history, and status transitions in staging. |
 | 82 | `reports-moderation.sql` | Reports/moderation | Adds private content reports and server-authorized Admin review with audit history; decisions do not punish accounts or modify content, commissions, or payments. | `profile-access-expand.sql`, `account-lifecycle-hardening.sql`, `artworks.sql`, `artwork-publication.sql`, `commission-posts-foundation.sql`, `revision-requests.sql` | tables: public.content_reports, public.content_report_reviews; functions: public.submit_content_report(text, uuid, text, text), public.list_content_reports_for_admin(text, text), public.get_content_report_detail(uuid), public.review_content_report(uuid, text, text); effects: ACL, RLS, indexes, function definitions | Revoke-first; reporter status-only column grants and owner RLS; Admin RPC authorization uses the existing helper; duplicate-open and rolling report limits; verify ACL, target visibility, audit history, and transitions in isolation before controlled deployment. |
+| 83 | `account-lifecycle-commission-integration.sql` | Account lifecycle/Commissions | Rejects every new commission whose Artist or Client lacks writable lifecycle state without replacing request or selection RPCs. | `account-lifecycle-hardening.sql`, `commission-request-concurrency-hardening.sql`, `commission-post-symmetric-selection.sql` | function: public.is_account_writable(uuid); trigger function: public.require_writable_commission_participants(); trigger: commissions_require_writable_participants ON public.commissions; effects: function and trigger only; existing commission rows are untouched | Transactional prerequisite check; rerunnable trigger replacement; test both participant roles and deletion-request states in staging. |
+| 84 | `account-lifecycle-active-check-rpc-recovery.sql` | Account lifecycle recovery | Restores `is_my_account_active()` only after the full lifecycle protections are already installed and the RPC is confirmed missing. | `account_lifecycle`, `is_my_account_writable()`, `guard_account_write()`, restrictive profile policy and profile write-guard trigger | function: public.is_my_account_active(); effects: SECURITY DEFINER function replacement, ACL, PostgREST schema notification; no table or account-state changes | Narrow recovery only; prerequisite block aborts if base lifecycle protections are absent. Do not use in place of `account-lifecycle-hardening.sql`. |
 
 ## Privilege target index
 

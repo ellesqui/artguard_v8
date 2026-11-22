@@ -637,38 +637,391 @@ prove which revisions or provider settings are deployed.
 
 `supabase/account-lifecycle-hardening.sql` is a forward-only migration. Run it
 only in staging first, after the profile, commission, payment, artwork, chat,
-and notification tables listed at the start of the migration exist. It adds
+notification, and artist commission service tables listed at the start of the
+migration exist with RLS already enabled. It adds
 server-authorized `deactivate_my_account()` and
 `request_my_account_deletion()` RPCs, account-state checks for authenticated
 table and ArtGuard Storage access, and a private deletion-request status table.
 The RPCs derive identity from `auth.uid()`; the frontend supplies no user ID.
+
+If authentication hydration reports `PGRST202` for
+`public.is_my_account_active()`, do not bypass the check or replace it with a
+profile fallback. The full lifecycle migration defines this security-definer
+RPC and its `public.account_lifecycle` dependency. The narrow,
+idempotent
+`supabase/account-lifecycle-active-check-rpc-recovery.sql` is only for a
+confirmed schema-cache/function recovery when the lifecycle table and all
+account-lifecycle protections are already installed. If those protections
+are absent or uncertain, validate and apply the full lifecycle migration
+through the normal staged process instead. No lifecycle SQL has been applied
+to production as part of this task.
 
 Recommended rollout:
 
 1. Reconcile migration history and apply/test the Phase 0 Expand and corrective
    migrations in their documented order. Keep the profile Contract migration
    blocked until the legacy-client gate in the Phase 0 deployment guide is met.
-2. Verify all prerequisites and test `account-lifecycle-hardening.sql` in a
-   disposable Supabase staging project. Specifically exercise both roles,
-   active commission/payment rejection, duplicate requests, RLS, Storage, and
-   session revocation.
-3. Apply the account-lifecycle migration before deploying the frontend that
-   calls `is_my_account_active()` and the account-management RPCs. The new
-   frontend fails closed if this migration is missing.
-4. Deploy the frontend only after staging checks pass. Existing active clients
-   remain compatible; deactivated users are blocked by database triggers and
-   restrictive RLS even when using an older frontend.
-5. Keep profile Contract rollout separate. Do not infer that Vercel deployment
-   refreshes already-open tabs, and do not apply Contract until the legacy
-   profile `SELECT *` clients have been retired.
+2. On this existing project, confirm the commission, payment, post, Storage,
+   profile, chat, notification, and `artist_commission_services` foundations
+   are already installed. In particular, inspect the service table's owner
+   column, RLS state, public-active SELECT policy, and owner-checked service
+   RPCs. Do not rerun a foundation migration just to satisfy this preflight.
+3. Confirm the latest request and selection definitions are installed:
+   `commission-request-concurrency-hardening.sql`,
+   `commission-post-symmetric-selection.sql`, and the reviewed payment
+   cancellation/refund/lockdown definitions. Keep the service listing,
+   commission RPC, and payment protections intact.
+4. Run the read-only preflight below. It must show every required relation
+   exists with RLS enabled and confirm the service table's existing policies.
+   The lifecycle migration intentionally aborts if a required table is missing
+   or RLS is off; do not "fix" a failed preflight by blindly enabling RLS.
+5. Apply `supabase/account-lifecycle-hardening.sql` in staging, then
+   `supabase/account-lifecycle-commission-integration.sql`, then
+   `supabase/account-deletion-admin-review.sql` after
+   `profile-access-expand.sql` and its `is_current_user_admin()` helper. The
+   commission integration must follow both the lifecycle migration and the
+   latest request/selection RPCs. It checks both parties on every new
+   commission insert without replacing those RPCs.
+6. Run the post-deployment catalog checks below and the isolated integration
+   tests. Then perform the controlled production SQL rollout separately from
+   this repository task; deploy/update the frontend only after
+   `is_my_account_active()` and its required protections are confirmed.
+7. Keep profile Contract rollout separate. Do not infer that Vercel deployment
+   refreshes already-open tabs, and do not apply Contract until legacy profile
+   `SELECT *` clients have been retired.
+
+The read-only relation/RLS preflight is safe to run in the SQL Editor:
+
+```sql
+with expected(rel, required) as (
+  values
+    ('public.profiles', true),
+    ('public.conversations', true),
+    ('public.conversation_participants', true),
+    ('public.messages', true),
+    ('public.commissions', true),
+    ('public.commission_payments', true),
+    ('public.commission_milestones', true),
+    ('public.commission_deliverables', true),
+    ('public.revision_requests', true),
+    ('public.commission_progress_updates', true),
+    ('public.commission_posts', true),
+    ('public.commission_post_applications', true),
+    ('public.artworks', true),
+    ('public.notifications', true),
+    ('public.artist_commission_services', true),
+    ('storage.objects', true),
+    ('public.artist_reviews', false),
+    ('public.artwork_likes', false),
+    ('public.artwork_comments', false),
+    ('public.artwork_protection_settings', false),
+    ('public.commission_post_comments', false),
+    ('public.conversation_notification_preferences', false),
+    ('public.user_blocks', false)
+)
+select
+  expected.rel as relation,
+  expected.required,
+  coalesce(c.relrowsecurity, false) as rls_enabled,
+  case
+    when c.oid is null and expected.required then 'FAIL: missing relation'
+    when c.oid is null then 'OPTIONAL: relation absent'
+    when not c.relrowsecurity then 'FAIL: RLS is disabled'
+    else 'PASS'
+  end as result
+from expected
+left join pg_class as c on c.oid = to_regclass(expected.rel)
+order by expected.rel;
+
+select
+  policyname,
+  permissive,
+  roles,
+  cmd,
+  qual,
+  with_check
+from pg_policies
+where schemaname = 'public'
+  and tablename = 'artist_commission_services'
+order by policyname;
+
+select
+  c.relrowsecurity as rls_enabled,
+  c.relforcerowsecurity as rls_forced
+from pg_class as c
+where c.oid = to_regclass('public.artist_commission_services');
+
+select
+  p.oid::regprocedure as signature,
+  pg_get_userbyid(p.proowner) as function_owner,
+  p.prosecdef as security_definer,
+  p.proconfig as function_settings,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute,
+  has_function_privilege('anon', p.oid, 'EXECUTE') as anon_can_execute
+from pg_proc as p
+join pg_namespace as n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in (
+    'create_artist_commission_service',
+    'update_artist_commission_service',
+    'set_artist_commission_service_active',
+    'list_my_artist_commission_services',
+    'list_active_artist_commission_services'
+  )
+order by p.oid::regprocedure::text;
+
+select
+  table_name,
+  column_name,
+  data_type
+from information_schema.columns
+where table_schema = 'public'
+  and (
+    (table_name = 'artist_commission_services'
+      and column_name in ('artist_id', 'is_active'))
+    or (table_name = 'commissions'
+      and column_name in ('client_id', 'artist_id', 'status'))
+    or (table_name = 'commission_post_applications'
+      and column_name in ('applicant_id', 'applicant_role', 'artist_id', 'status'))
+  )
+order by table_name, ordinal_position;
+
+select
+  conname,
+  contype,
+  pg_get_constraintdef(oid) as definition
+from pg_constraint
+where conrelid = to_regclass('public.artist_commission_services')
+order by conname;
+```
+
+After applying the lifecycle migrations, this read-only verification checks
+protected-table RLS, lifecycle function signatures/permissions, restrictive
+active-account policies, and the write/eligibility triggers:
+
+```sql
+with protected(rel, required) as (
+  values
+    ('public.profiles', true),
+    ('public.conversations', true),
+    ('public.conversation_participants', true),
+    ('public.messages', true),
+    ('public.commissions', true),
+    ('public.commission_payments', true),
+    ('public.commission_milestones', true),
+    ('public.commission_deliverables', true),
+    ('public.revision_requests', true),
+    ('public.commission_progress_updates', true),
+    ('public.commission_posts', true),
+    ('public.commission_post_applications', true),
+    ('public.artworks', true),
+    ('public.notifications', true),
+    ('public.artist_commission_services', true),
+    ('public.account_lifecycle', true),
+    ('public.account_deletion_requests', true),
+    ('public.account_deletion_request_reviews', true),
+    ('storage.objects', true),
+    ('public.artist_reviews', false),
+    ('public.artwork_likes', false),
+    ('public.artwork_comments', false),
+    ('public.artwork_protection_settings', false),
+    ('public.commission_post_comments', false),
+    ('public.conversation_notification_preferences', false),
+    ('public.user_blocks', false)
+)
+select
+  protected.rel as relation,
+  protected.required,
+  coalesce(c.relrowsecurity, false) as rls_enabled,
+  case
+    when c.oid is null and protected.required then 'FAIL: missing relation'
+    when c.oid is null then 'OPTIONAL: relation absent'
+    when not c.relrowsecurity then 'FAIL: RLS is disabled'
+    else 'PASS'
+  end as result
+from protected
+left join pg_class as c on c.oid = to_regclass(protected.rel)
+order by protected.rel;
+
+with expected(signature) as (
+  values
+    ('public.ensure_account_lifecycle_row()'),
+    ('public.is_my_account_active()'),
+    ('public.is_my_account_writable()'),
+    ('public.deactivate_my_account()'),
+    ('public.request_my_account_deletion()'),
+    ('public.assert_account_has_no_active_work(uuid)'),
+    ('public.guard_account_write()'),
+    ('public.is_account_writable(uuid)'),
+    ('public.require_writable_commission_participants()'),
+    ('public.is_current_user_admin()'),
+    ('public.list_account_deletion_requests_for_admin()'),
+    ('public.get_account_deletion_request_review(uuid)'),
+    ('public.review_account_deletion_request(uuid,text,text)')
+)
+select
+  expected.signature,
+  p.oid::regprocedure as found_signature,
+  pg_get_function_result(p.oid) as return_type,
+  p.prosecdef as security_definer,
+  p.proconfig as function_settings,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute,
+  has_function_privilege('anon', p.oid, 'EXECUTE') as anon_can_execute,
+  case when p.oid is null then 'FAIL: missing function' else 'PRESENT; review grants' end as result
+from expected
+left join pg_proc as p on p.oid = to_regprocedure(expected.signature)
+order by expected.signature;
+
+with expected(schema_name, table_name, policy_name) as (
+  values
+    ('public', 'profiles', 'artguard_active_account_access'),
+    ('public', 'conversations', 'artguard_active_account_access'),
+    ('public', 'conversation_participants', 'artguard_active_account_access'),
+    ('public', 'messages', 'artguard_active_account_access'),
+    ('public', 'commissions', 'artguard_active_account_access'),
+    ('public', 'commission_payments', 'artguard_active_account_access'),
+    ('public', 'commission_milestones', 'artguard_active_account_access'),
+    ('public', 'commission_deliverables', 'artguard_active_account_access'),
+    ('public', 'revision_requests', 'artguard_active_account_access'),
+    ('public', 'commission_progress_updates', 'artguard_active_account_access'),
+    ('public', 'commission_posts', 'artguard_active_account_access'),
+    ('public', 'commission_post_applications', 'artguard_active_account_access'),
+    ('public', 'artworks', 'artguard_active_account_access'),
+    ('public', 'notifications', 'artguard_active_account_access'),
+    ('public', 'artist_commission_services', 'artguard_active_account_access'),
+    ('public', 'artist_reviews', 'artguard_active_account_access'),
+    ('public', 'artwork_likes', 'artguard_active_account_access'),
+    ('public', 'artwork_comments', 'artguard_active_account_access'),
+    ('public', 'artwork_protection_settings', 'artguard_active_account_access'),
+    ('public', 'commission_post_comments', 'artguard_active_account_access'),
+    ('public', 'conversation_notification_preferences', 'artguard_active_account_access'),
+    ('public', 'user_blocks', 'artguard_active_account_access'),
+    ('storage', 'objects', 'artguard_active_account_storage_access')
+)
+select
+  expected.schema_name,
+  expected.table_name,
+  expected.policy_name,
+  policy.permissive,
+  policy.roles,
+  policy.cmd,
+  policy.qual,
+  policy.with_check,
+  case
+    when policy.policyname is null then 'FAIL: missing policy'
+    when policy.permissive <> 'RESTRICTIVE' then 'FAIL: policy is permissive'
+    else 'PASS'
+  end as result
+from expected
+left join pg_policies as policy
+  on policy.schemaname = expected.schema_name
+  and policy.tablename = expected.table_name
+  and policy.policyname = expected.policy_name
+where to_regclass(format('%I.%I', expected.schema_name, expected.table_name)) is not null
+order by expected.schema_name, expected.table_name;
+
+with protected(table_name) as (
+  values
+    ('profiles'),
+    ('conversations'),
+    ('conversation_participants'),
+    ('messages'),
+    ('commissions'),
+    ('commission_payments'),
+    ('commission_milestones'),
+    ('commission_deliverables'),
+    ('revision_requests'),
+    ('commission_progress_updates'),
+    ('commission_posts'),
+    ('commission_post_applications'),
+    ('artworks'),
+    ('notifications'),
+    ('artist_commission_services'),
+    ('artist_reviews'),
+    ('artwork_likes'),
+    ('artwork_comments'),
+    ('artwork_protection_settings'),
+    ('commission_post_comments'),
+    ('conversation_notification_preferences'),
+    ('user_blocks')
+)
+select
+  protected.table_name,
+  trigger.tgname as trigger_name,
+  trigger.tgenabled as enabled_state,
+  pg_get_triggerdef(trigger.oid) as definition,
+  case
+    when trigger.oid is null then 'FAIL: missing write guard'
+    when trigger.tgenabled not in ('O', 'A') then 'FAIL: trigger disabled'
+    else 'PASS'
+  end as result
+from protected
+left join pg_class as relation
+  on relation.oid = to_regclass(format('public.%I', protected.table_name))
+left join pg_trigger as trigger
+  on trigger.tgrelid = relation.oid
+  and trigger.tgname = 'artguard_account_write_guard'
+  and not trigger.tgisinternal
+where relation.oid is not null
+order by protected.table_name;
+
+select
+  'public.profiles' as table_name,
+  trigger.tgname as trigger_name,
+  trigger.tgenabled as enabled_state,
+  pg_get_triggerdef(trigger.oid) as definition,
+  case
+    when trigger.oid is null then 'FAIL: missing lifecycle-row trigger'
+    when trigger.tgenabled not in ('O', 'A') then 'FAIL: trigger disabled'
+    else 'PASS'
+  end as result
+from pg_class as relation
+left join pg_trigger as trigger
+  on trigger.tgrelid = relation.oid
+  and trigger.tgname = 'profiles_ensure_account_lifecycle_row'
+  and not trigger.tgisinternal
+where relation.oid = to_regclass('public.profiles');
+
+select
+  'public.commissions' as table_name,
+  trigger.tgname as trigger_name,
+  trigger.tgenabled as enabled_state,
+  pg_get_triggerdef(trigger.oid) as definition,
+  case
+    when trigger.oid is null then 'FAIL: missing participant eligibility trigger'
+    when trigger.tgenabled not in ('O', 'A') then 'FAIL: trigger disabled'
+    else 'PASS'
+  end as result
+from pg_class as relation
+left join pg_trigger as trigger
+  on trigger.tgrelid = relation.oid
+  and trigger.tgname = 'commissions_require_writable_participants'
+  and not trigger.tgisinternal
+where relation.oid = to_regclass('public.commissions');
+```
+
+These catalog checks confirm object existence and configuration, not live
+authorization behavior. Verify both Artist and Client flows in staging before
+production. In particular, check that deactivation marks services inactive
+without deleting them, rejects while work or refund resolution is pending,
+and does not permit a new request or post selection involving an account with
+deactivated lifecycle state or an open deletion request.
 
 Deactivation is reversible state, not deletion. It is rejected while the
 account has an active commission, pending payment, open/selected commission
-post, or pending application. A successful request preserves profile,
+post, pending application, or a paid payment on a cancelled commission awaiting
+the existing simulated refund. A successful request preserves profile,
 artwork, chat, commission, and financial records, then asks Supabase Auth to
 sign out all sessions. Access tokens already issued may remain valid until
 expiry; the database guards are the enforcement boundary during that period.
 Reactivation remains a verified support/admin operation.
+
+The repository's refund RPC is explicitly simulated and does not contact a
+payment provider or move funds. Do not present it as a real refund. Account
+deactivation is blocked while such a refund is outstanding so the existing
+authorized simulation can finish first. A future provider reconciliation path
+must rely on a verified provider event and a trusted server-role operation;
+this migration does not create or fake a provider refund.
 
 Deletion is a private request, not an immediate hard delete. It is rejected
 until the same active-work checks pass, deduplicated while open, and readable
@@ -681,8 +1034,8 @@ adds the `IN_REVIEW` state and a private
 caller server-side with the existing Admin helper; they expose only the
 requester's name, username, role, relevant business-state counts, and review
 history, not messages or unrelated profile data. Review transitions are
-`PENDING` → `IN_REVIEW` → `APPROVED` or `REJECTED`; decision reasons are
-required and each transition records the Admin and timestamp.
+`PENDING` → `IN_REVIEW` → `APPROVED` or `REJECTED`; final decision reasons
+are required and each transition records the Admin and timestamp.
 
 The Admin review UI records a decision only. An approved request remains
 blocked from new protected writes and awaits a separate authorized retention
@@ -731,20 +1084,23 @@ RLS, direct status-write denial, review transitions and audit history, active
 work checks, Storage gating, and the absence of deletion side effects. Keep
 profile Contract rollout separate.
 
-Neither lifecycle migration nor the Admin review migration has been applied
-to production. Before production use, staging must verify the exact live
-table/RPC/policy definitions, Admin helper ownership, Storage behavior, Auth
-global sign-out, concurrent account writes versus state transitions, and
-every SECURITY DEFINER read RPC that may expose private history. No live
-Supabase lifecycle behavior has been verified here.
+None of the lifecycle migrations has been applied to production. Before
+production use, staging must verify the exact live table/RPC/policy
+definitions, Admin helper ownership, Storage behavior, Auth global sign-out,
+concurrent account writes versus state transitions, and every SECURITY
+DEFINER read RPC that may expose private history. No live Supabase lifecycle
+behavior has been verified here.
 
-Prior local validation used a disposable PGlite database with test-only Supabase
-roles, `auth.uid()`, Auth users/profiles, the required commission/payment/chat/
-artwork/notification tables, and `storage.objects`. Twenty-two assertions passed
-across the lifecycle suite and follow-up compatibility checks, including
-idempotency, Artist and Client deactivation, deletion-request privacy and
-deduplication, active-work rejection, blocked post-deactivation writes,
-signup lifecycle-row creation, active Admin profile reads, active Storage
-preview reads, and trusted `service_role` state management. PGlite does not
-verify Supabase Auth token revocation, actual Storage policy integration,
-production RLS definitions, or concurrent sessions.
+The local `npm run test:account-lifecycle` suite applies the relevant source
+migrations in a disposable PGlite database with test-only Supabase roles,
+`auth.uid()`, Auth users/profiles, the protected commission/payment/post
+tables, the service table, and `storage.objects`. It covers active service
+discovery and requests, retained-but-disabled listings, both role directions
+for post selection, inactive participant rejection, existing commission
+preservation, pending payment/refund gates, a trusted service-role payment
+update at the write-guard boundary (not provider verification), profile
+entitlement restrictions, lifecycle ACLs, `IN_REVIEW` compatibility after
+rerunning the base migration, and profile backfill. This fixture is not a full
+Supabase installation; PGlite does not verify actual Storage policy
+integration, Auth token revocation, production RLS definitions, payment
+provider behavior, or concurrent sessions.

@@ -7,6 +7,7 @@ begin;
 do $$
 declare
   v_table_name text;
+  v_rls_enabled boolean;
 begin
   foreach v_table_name in array array[
     'profiles',
@@ -22,17 +23,58 @@ begin
     'commission_posts',
     'commission_post_applications',
     'artworks',
-    'notifications'
+    'notifications',
+    'artist_commission_services'
   ]
   loop
     if to_regclass(format('public.%I', v_table_name)) is null then
       raise exception 'Account lifecycle migration requires public.% to exist', v_table_name;
+    end if;
+
+    select c.relrowsecurity
+      into v_rls_enabled
+    from pg_class as c
+    where c.oid = to_regclass(format('public.%I', v_table_name));
+
+    if v_rls_enabled is distinct from true then
+      raise exception 'Account lifecycle migration requires RLS enabled on public.%', v_table_name;
     end if;
   end loop;
 
   if to_regclass('storage.objects') is null then
     raise exception 'Account lifecycle migration requires storage.objects to exist';
   end if;
+
+  select c.relrowsecurity
+    into v_rls_enabled
+  from pg_class as c
+  where c.oid = to_regclass('storage.objects');
+
+  if v_rls_enabled is distinct from true then
+    raise exception 'Account lifecycle migration requires RLS enabled on storage.objects';
+  end if;
+
+  foreach v_table_name in array array[
+    'artist_reviews',
+    'artwork_likes',
+    'artwork_comments',
+    'artwork_protection_settings',
+    'commission_post_comments',
+    'conversation_notification_preferences',
+    'user_blocks'
+  ]
+  loop
+    if to_regclass(format('public.%I', v_table_name)) is not null then
+      select c.relrowsecurity
+        into v_rls_enabled
+      from pg_class as c
+      where c.oid = to_regclass(format('public.%I', v_table_name));
+
+      if v_rls_enabled is distinct from true then
+        raise exception 'Account lifecycle migration requires RLS enabled on public.%', v_table_name;
+      end if;
+    end if;
+  end loop;
 end;
 $$;
 
@@ -58,15 +100,22 @@ create table if not exists public.account_deletion_requests (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
   status text not null default 'PENDING'
-    check (status in ('PENDING', 'APPROVED', 'REJECTED', 'COMPLETED', 'CANCELLED')),
+    check (status in ('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED', 'CANCELLED')),
   requested_at timestamptz not null default now(),
   reviewed_at timestamptz,
   completed_at timestamptz
 );
 
-create unique index if not exists account_deletion_requests_one_open_per_user_idx
+alter table public.account_deletion_requests
+  drop constraint if exists account_deletion_requests_status_check;
+alter table public.account_deletion_requests
+  add constraint account_deletion_requests_status_check
+  check (status in ('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED', 'CANCELLED'));
+
+drop index if exists public.account_deletion_requests_one_open_per_user_idx;
+create unique index account_deletion_requests_one_open_per_user_idx
   on public.account_deletion_requests(user_id)
-  where status in ('PENDING', 'APPROVED');
+  where status in ('PENDING', 'IN_REVIEW', 'APPROVED');
 
 alter table public.account_lifecycle enable row level security;
 revoke all on public.account_lifecycle from public, anon, authenticated;
@@ -156,7 +205,7 @@ begin
       select 1
       from public.account_deletion_requests as request
       where request.user_id = v_user_id
-        and request.status in ('PENDING', 'APPROVED')
+        and request.status in ('PENDING', 'IN_REVIEW', 'APPROVED')
     );
 end;
 $$;
@@ -187,6 +236,17 @@ begin
       and payment.status = 'PENDING'
   ) then
     raise exception 'Resolve pending payments before deactivating or requesting deletion';
+  end if;
+
+  if exists (
+    select 1
+    from public.commission_payments as payment
+    join public.commissions as commission on commission.id = payment.commission_id
+    where (payment.payer_id = p_user_id or payment.payee_id = p_user_id)
+      and payment.status = 'PAID'
+      and commission.status = 'CANCELLED'
+  ) then
+    raise exception 'Resolve pending simulated refunds before deactivating or requesting deletion';
   end if;
 
   if exists (
@@ -243,6 +303,11 @@ begin
 
   perform public.assert_account_has_no_active_work(v_user_id);
 
+  update public.artist_commission_services
+  set is_active = false
+  where artist_id = v_user_id
+    and is_active;
+
   update public.account_lifecycle
   set status = 'DEACTIVATED',
       deactivated_at = clock_timestamp(),
@@ -285,7 +350,7 @@ begin
     into v_request
   from public.account_deletion_requests as request
   where request.user_id = v_user_id
-    and request.status in ('PENDING', 'APPROVED')
+    and request.status in ('PENDING', 'IN_REVIEW', 'APPROVED')
   order by request.requested_at desc
   limit 1;
 
@@ -340,7 +405,7 @@ begin
       select 1
       from public.account_deletion_requests as request
       where request.user_id = v_user_id
-        and request.status in ('PENDING', 'APPROVED')
+        and request.status in ('PENDING', 'IN_REVIEW', 'APPROVED')
     ) then
     raise exception using
       errcode = '42501',
@@ -375,6 +440,7 @@ begin
     'commission_post_applications',
     'artworks',
     'notifications',
+    'artist_commission_services',
     'artist_reviews',
     'artwork_likes',
     'artwork_comments',
@@ -424,6 +490,7 @@ begin
     'commission_post_applications',
     'artworks',
     'notifications',
+    'artist_commission_services',
     'artist_reviews',
     'artwork_likes',
     'artwork_comments',
