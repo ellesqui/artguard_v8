@@ -934,7 +934,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         existingProfile = await getMyProfile(authUser.id);
       } catch (error) {
         logAuthRequestFailure('oauth', error);
-        return { success: false, error: 'Unable to load your profile. Check your connection and try again.' };
+        return {
+          success: false,
+          error: 'Google authentication succeeded, but your ArtGuard profile could not be loaded. Please try again later or contact support.',
+        };
       }
       const metadataName = googleDisplayName(authUser);
       const metadataRole = authUser.user_metadata?.role;

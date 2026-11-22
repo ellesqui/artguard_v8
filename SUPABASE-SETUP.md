@@ -371,6 +371,41 @@ The forward-only database migration order is:
 6. `supabase/profile-access-hardening.sql` — the profile **contract** stage;
    apply only after the frontend and legacy-client gate below.
 
+Google sign-up also depends on `supabase/google-signup-role-rpc.sql`. This
+separate authentication prerequisite defines the self-only
+`set_my_signup_role(text)` SECURITY DEFINER RPC used to persist the selected
+Artist or Client role for an incomplete Google signup without granting direct
+client updates to `profiles.role`. Apply it after the core profile schema and
+before deploying the Google signup flow. It does not replace
+`profile-access-expand.sql`, which supplies `get_my_profile()`, and it does not
+change profile SELECT privileges. The migration matrix lists it as a feature
+migration rather than part of the Phase 0 corrective sequence.
+
+### Conditional missing-RPC recovery
+
+`supabase/google-auth-profile-rpc-recovery.sql` is a narrow, additive recovery
+for a confirmed missing `public.get_my_profile()` RPC. It restores the exact
+caller-scoped JSONB function from `profile-access-expand.sql` and the exact
+guarded `set_my_signup_role(text)` function from
+`google-signup-role-rpc.sql`. It revokes EXECUTE from PUBLIC/anon and grants
+only authenticated execution. It does not grant table-wide or column-level
+profile SELECT, change profile RLS, or modify profile rows. It requests a
+PostgREST schema reload after commit. Its approved response is the complete
+JSONB row for the authenticated caller only, matching the existing
+`MyProfile`/`AuthContext` contract; it does not accept another user's ID or
+replace the explicit safe projections used for public profile reads.
+
+Use it only after confirming the target project and a read-only function
+diagnostic. If needed, run it after the core profile schema and before deploying
+or relying on the Google auth flow. Validate first in staging, and run it using
+a trusted migration role; a new SECURITY DEFINER function is owned by the
+executing role, while replacing an existing function preserves its owner.
+Verify the resulting owner, signature, return type, search path, and ACL in the
+target database. Do not re-run the full Expand migration after Contract,
+because Expand restores table-wide authenticated profile SELECT. This recovery
+does not recreate `is_current_user_admin()` or substitute for validating the
+rest of the Phase 0 migration state.
+
 The expand migration adds `get_my_profile()` and
 `is_current_user_admin()` while explicitly retaining authenticated table-wide
 profile SELECT and the existing public-profile row policy. This is temporary
@@ -422,7 +457,9 @@ this stage.
 ### Required release sequence
 
 1. Apply `profile-access-expand.sql` in the verified non-production project.
-   Keep the existing authenticated `SELECT *` behavior during this stage.
+   Keep the existing authenticated `SELECT *` behavior during this stage. Also
+   verify that `google-signup-role-rpc.sql` has been applied after the core
+   profile schema before enabling the Google signup flow.
 2. Apply `commission-transition-hardening.sql`, then
    `phase0-permission-hardening.sql`, after their exact prerequisites are
    confirmed. These do not contract profile column access.

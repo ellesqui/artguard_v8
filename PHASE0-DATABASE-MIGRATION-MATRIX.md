@@ -1,8 +1,9 @@
 # Phase 0 database migration matrix
 
-> Inventory snapshot of every SQL file currently under `supabase/` (77 files,
-> including the new payment lockdown). This is repository source inventory,
-> not a production migration ledger. No SQL was applied in this review.
+> Inventory snapshot of every SQL file currently under `supabase/` (79 files,
+> including account lifecycle hardening and Google auth profile RPC recovery).
+> This is repository source inventory, not a production migration ledger. No
+> SQL was applied to a remote database in this review.
 
 ## How to read this matrix
 
@@ -41,6 +42,12 @@ commission can start. Reapply it after any later function or grant
 replacement. The complete release gate and
 front-end sequence are in [PHASE0-DEPLOYMENT-RECOVERY.md](./PHASE0-DEPLOYMENT-RECOVERY.md).
 
+`google-auth-profile-rpc-recovery.sql` is a conditional recovery, not a routine
+Phase 0 step. Use it only after a read-only diagnostic confirms that the
+profile RPC is absent. It restores the approved profile and Google-role RPCs
+without changing profile table privileges or policies; see `SUPABASE-SETUP.md`
+for its staging and owner checks.
+
 ### Feature dependencies
 
 The SQL headers document only partial module dependencies. For a fresh install,
@@ -53,7 +60,7 @@ in the setup guide; and chat/commission corrections after their canonical
 foundation functions. Dependencies not explicitly named in a SQL header are
 **UNVERIFIED** until validated against the target schema.
 
-**Do not execute the 77 files alphabetically or as a batch.** On an existing
+**Do not execute the 79 files alphabetically or as a batch.** On an existing
 project, reconcile live objects and migration history first, apply only
 reviewed missing forward migrations, and validate every data backfill before
 execution.
@@ -93,7 +100,7 @@ behavior. Supabase CLI, Docker, and PostgreSQL client tools were unavailable;
 no remote connection or production SQL was attempted. Prior PGlite checks are
 isolated fixture tests, not live Supabase validation.
 
-## Complete SQL inventory (77 files)
+## Complete SQL inventory (79 files)
 
 | # | File | Category | Purpose (header) | Declared prerequisites | Objects and effects | Rerun / data risk |
 |---:|---|---|---|---|---|---|
@@ -174,6 +181,8 @@ isolated fixture tests, not live Supabase validation.
 | 75 | `real-commissions.sql` | Commissions | ArtGuard Hub — Batch 1A: real commission creation Run this ONCE in the Supabase SQL Editor, AFTER revision-requests.sql. | `revision-requests.sql` | functions: public.get_or_create_commission(p_order_ref text default null, p_counterparty_id uuid default null, p_title text default null); effects: ACL, function replacement | replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
 | 76 | `revision-requests.sql` | Commissions/revisions | ArtGuard Hub — Batch 1: Real Revision Request System Run this ONCE in the Supabase SQL Editor, after schema.sql / fix-direct-chat.sql. | `schema.sql`, `fix-direct-chat.sql` | created tables/columns: public.commissions (id, order_ref, client_id, artist_id, title, created_at, updated_at); public.revision_requests (id, commission_id, milestone_id, client_id, artist_id, description, status, response_text, created_at, updated_at); altered tables: public.commissions, public.revision_requests; functions: public.get_or_create_commission(p_order_ref text, p_counterparty_id uuid, p_title text); public.create_revision_request(p_commission_id uuid, p_description text); public.set_revision_status(p_revision_id uuid, p_status text, p_response_text text default null); triggers: commissions_set_updated_at ON public.commissions; revision_requests_set_updated_at ON public.revision_requests; policies: commission parties can read ON public.commissions; either party can create a commission link ON public.commissions; revision parties can read ON public.revision_requests; client can create their own revision request ON public.revision_requests; revision parties can update their own revision request ON public.revision_requests; effects: ACL, RLS/policy, migration-time DML/backfill, destructive change present, function replacement, policy replacement | data backfill/DML: verify row scope and rerun behavior; replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
 | 77 | `schema.sql` | Core schema | ArtGuard Hub Supabase/Postgres schema for real multi-user accounts, profiles, | UNVERIFIED: no explicit prerequisite comment found. | created tables/columns: public.profiles (id, name, username, role, bio, interests, avatar_data_url, onboarded, is_pro, last_seen_at, created_at, updated_at); public.conversations (id, created_at, updated_at); public.conversation_participants (conversation_id, user_id, joined_at); public.messages (id, conversation_id, sender_id, kind, text, image_name, image_variant, file_name, file_type, file_size, status, reaction, created_at); altered tables: public.profiles, public.conversations, public.conversation_participants, public.messages; functions: public.set_updated_at(); public.handle_new_user(); public.get_or_create_conversation(p_other_user_id uuid); triggers: profiles_set_updated_at ON public.profiles; conversations_set_updated_at ON public.conversations; on_auth_user_created ON auth.users; policies: authenticated users can read profiles ON public.profiles; users can update their own profile ON public.profiles; participants can read conversations ON public.conversations; participants can update conversations ON public.conversations; participants can read participant rows ON public.conversation_participants; users can add themselves to conversations ON public.conversation_participants; participants can read messages ON public.messages; participants can send messages ON public.messages; participants can update messages ON public.messages; effects: ACL, RLS/policy, migration-time DML/backfill, destructive change present, function replacement, policy replacement | data backfill/DML: verify row scope and rerun behavior; replacement/idempotency syntax present; semantic rerun safety UNVERIFIED. |
+| 78 | `account-lifecycle-hardening.sql` | Account lifecycle | Adds caller-authorized reversible deactivation and private deletion requests without hard-deleting user data. | Profile, commission, payment, artwork, chat, notification, and Storage foundations | tables: public.account_lifecycle, public.account_deletion_requests; functions: public.ensure_account_lifecycle_row(), public.is_my_account_active(), public.is_my_account_writable(), public.assert_account_has_no_active_work(uuid), public.deactivate_my_account(), public.request_my_account_deletion(), public.guard_account_write(); triggers and restrictive account-state policies on protected tables and Storage; effects: ACL, RLS/policy, migration-time backfill, function replacement | Verify prerequisites, backfill, active-work checks, and policy behavior in staging; no hard-delete operation. |
+| 79 | `google-auth-profile-rpc-recovery.sql` | Authentication | Restores the reviewed caller-only profile RPC and guarded Google signup-role RPC after a confirmed missing-function diagnostic. | Core `public.profiles` columns, `auth.uid()`, Supabase roles | functions: public.get_my_profile(), public.set_my_signup_role(p_role text); effects: ACL, function replacement; no profile table grants, policy changes, or profile-row DML | Idempotent function replacement and grants; run as trusted migration role and verify function owners and ACLs. |
 
 ## Privilege target index
 
