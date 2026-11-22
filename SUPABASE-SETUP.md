@@ -383,28 +383,61 @@ migration rather than part of the Phase 0 corrective sequence.
 
 ### Conditional missing-RPC recovery
 
-`supabase/google-auth-profile-rpc-recovery.sql` is a narrow, additive recovery
-for a confirmed missing `public.get_my_profile()` RPC. It restores the exact
-caller-scoped JSONB function from `profile-access-expand.sql` and the exact
-guarded `set_my_signup_role(text)` function from
-`google-signup-role-rpc.sql`. It revokes EXECUTE from PUBLIC/anon and grants
-only authenticated execution. It does not grant table-wide or column-level
-profile SELECT, change profile RLS, or modify profile rows. It requests a
-PostgREST schema reload after commit. Its approved response is the complete
-JSONB row for the authenticated caller only, matching the existing
-`MyProfile`/`AuthContext` contract; it does not accept another user's ID or
-replace the explicit safe projections used for public profile reads.
+`supabase/google-auth-profile-rpc-recovery.sql` contains the approved
+`get_my_profile()` definition followed by `set_my_signup_role(text)`. The
+reported post-run diagnostic found the signup-role function but no
+`get_my_profile()` in any schema. Inspection confirms the profile function is
+present, executable SQL, correctly dollar-quoted, and matches
+`profile-access-expand.sql`; the two definitions are in one transaction. The
+reported result therefore does not identify a defect in that file. It cannot
+establish whether only part of the file was selected/executed, the transaction
+failed or was rolled back, a different project was queried, or the function was
+removed later. The signup-role function may also have existed before that file
+was run.
 
-Use it only after confirming the target project and a read-only function
-diagnostic. If needed, run it after the core profile schema and before deploying
-or relying on the Google auth flow. Validate first in staging, and run it using
-a trusted migration role; a new SECURITY DEFINER function is owned by the
-executing role, while replacing an existing function preserves its owner.
-Verify the resulting owner, signature, return type, search path, and ACL in the
-target database. Do not re-run the full Expand migration after Contract,
-because Expand restores table-wide authenticated profile SELECT. This recovery
-does not recreate `is_current_user_admin()` or substitute for validating the
-rest of the Phase 0 migration state.
+For the reported state, use the separate
+`supabase/google-auth-get-my-profile-recovery.sql`. This file creates only
+`public.get_my_profile()`, applies its minimal function permissions, and
+requests a PostgREST schema reload. It does not recreate or modify
+`set_my_signup_role(text)`, grant profile table SELECT, change profile RLS, or
+modify profile rows. The approved response is the complete JSONB row for the
+authenticated caller only, matching the existing `MyProfile`/`AuthContext`
+contract; it does not accept another user's ID or replace the explicit safe
+projections used for public profile reads.
+
+**Run only the standalone file** after confirming the SQL Editor is connected
+to the intended project and schema. Open that file, execute its entire contents
+once, then run the read-only verification query below. Do not rerun the previous
+combined recovery file. Validate in staging first and use a trusted migration
+role; a new SECURITY DEFINER function is owned by the executing role, while
+replacing an existing function preserves its owner. Verify the resulting
+signature, return type, owner, search path, and ACL in the target database.
+
+```sql
+select
+  n.nspname as schema_name,
+  p.oid::regprocedure as signature,
+  pg_get_function_result(p.oid) as result_type,
+  p.prosecdef as security_definer,
+  p.proconfig as function_settings,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_execute,
+  has_function_privilege('anon', p.oid, 'EXECUTE') as anon_execute
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('get_my_profile', 'set_my_signup_role')
+order by p.proname;
+```
+
+Expect two rows: `get_my_profile()` returning `jsonb` and
+`set_my_signup_role(text)` returning `boolean`; both should be SECURITY
+DEFINER, executable by `authenticated`, and not executable by `anon`. The
+profile function should have the fixed search path
+`pg_catalog, public, pg_temp`.
+
+Do not rerun the full Expand migration after Contract, because Expand restores
+table-wide authenticated profile SELECT. This standalone recovery does not
+recreate `is_current_user_admin()` or validate the rest of the Phase 0 state.
 
 The expand migration adds `get_my_profile()` and
 `is_current_user_admin()` while explicitly retaining authenticated table-wide
