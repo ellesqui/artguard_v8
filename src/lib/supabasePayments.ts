@@ -13,11 +13,28 @@ export interface CommissionPayment {
   provider: string | null;
   provider_reference: string | null;
   provider_verified_at?: string | null;
+  demo_paid_at?: string | null;
   created_at: string;
   paid_at: string | null;
   refunded_at: string | null;
   refunded_amount: number | null;
   created_by: string;
+}
+
+export type DemoEarningsCategory = 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
+
+export interface DemoCommissionEarning {
+  payment_id: string;
+  commission_id: string;
+  client_name: string;
+  commission_title: string;
+  amount: number;
+  currency: string;
+  payment_status: CommissionPaymentStatus;
+  paid_at: string | null;
+  refunded_at: string | null;
+  commission_status: string;
+  earnings_category: DemoEarningsCategory;
 }
 
 function readPayment(data: unknown): CommissionPayment {
@@ -55,10 +72,26 @@ export async function listMyPaidCommissionPayments(
   return ((data ?? []) as CommissionPayment[]).filter((payment) => Boolean(payment.provider_verified_at));
 }
 
+export async function listMyDemoCommissionEarnings(): Promise<DemoCommissionEarning[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('list_my_demo_commission_earnings');
+  if (error) throw error;
+  return (data ?? []) as DemoCommissionEarning[];
+}
+
 export async function createCommissionPayment(commissionId: string): Promise<CommissionPayment> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.rpc('create_commission_payment', {
     p_commission_id: commissionId,
+  });
+  if (error) throw error;
+  return readPayment(data);
+}
+
+export async function simulateCommissionPaymentDemoSuccess(paymentId: string): Promise<CommissionPayment> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('simulate_commission_payment_demo_success', {
+    p_payment_id: paymentId,
   });
   if (error) throw error;
   return readPayment(data);

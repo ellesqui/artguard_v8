@@ -45,6 +45,8 @@ stable
 as $$
   select nullif(current_setting('request.jwt.claim.role', true), '')
 $$;
+grant usage on schema auth to authenticated, service_role;
+grant execute on function auth.uid(), auth.role() to authenticated, service_role;
 
 create schema storage;
 create table storage.objects (
@@ -207,6 +209,8 @@ const foundationalMigrations = [
   'commission-payment-cancellation-coordination.sql',
   'commission-payment-refunds.sql',
   'commission-payment-simulation-lockdown.sql',
+  'commission-demo-payments.sql',
+  'commission-demo-payment-security-hardening.sql',
   'pro-entitlement-hardening.sql',
 ];
 
@@ -232,6 +236,25 @@ async function asUser(db, userId, query, params = []) {
   }
 }
 
+async function asReadOnlyUser(db, userId, query, params = []) {
+  await db.exec(`
+    set role authenticated;
+    select set_config('request.jwt.claim.sub', '${userId}', false);
+    select set_config('request.jwt.claim.role', 'authenticated', false);
+    begin transaction read only;
+  `);
+  try {
+    return await db.query(query, params);
+  } finally {
+    await db.exec(`
+      rollback;
+      reset role;
+      select set_config('request.jwt.claim.sub', '', false);
+      select set_config('request.jwt.claim.role', '', false);
+    `);
+  }
+}
+
 async function asServiceRole(db, query) {
   await db.exec(`
     set role service_role;
@@ -249,6 +272,15 @@ async function asServiceRole(db, query) {
   }
 }
 
+async function setDemoPaymentsEnabled(db, enabled) {
+  await db.query(
+    `update public.commission_demo_payment_config
+     set enabled = $1, updated_at = now()
+     where singleton = true`,
+    [enabled],
+  );
+}
+
 async function expectRejected(promise, pattern) {
   await assert.rejects(promise, (error) => {
     assert.match(error.message, pattern);
@@ -264,6 +296,45 @@ test('account lifecycle and commission integrations use complete PGlite dependen
     for (const migration of foundationalMigrations) {
       await applyMigration(db, migration);
     }
+
+    const demoConfig = await db.query(`
+      select enabled from public.commission_demo_payment_config where singleton = true
+    `);
+    assert.equal(demoConfig.rows[0].enabled, false);
+    await expectRejected(
+      asUser(
+        db,
+        ids.activeClient,
+        `update public.commission_demo_payment_config
+         set enabled = true where singleton = true`,
+      ),
+      /permission denied|42501/i,
+    );
+    await expectRejected(
+      asServiceRole(
+        db,
+        `update public.commission_demo_payment_config
+         set enabled = true where singleton = true`,
+      ),
+      /permission denied|42501/i,
+    );
+    const paymentRpcGrants = await db.query(`
+      select
+        has_function_privilege('authenticated', 'public.simulate_commission_payment_demo_success(uuid)', 'EXECUTE') as client_can_demo_pay,
+        has_function_privilege('authenticated', 'public.simulate_commission_payment_failure(uuid)', 'EXECUTE') as client_can_simulate_failure,
+        has_function_privilege('anon', 'public.simulate_commission_payment_failure(uuid)', 'EXECUTE') as anon_can_simulate_failure,
+        has_function_privilege('authenticated', 'public.simulate_commission_payment_refund(uuid)', 'EXECUTE') as client_can_simulate_refund,
+        has_function_privilege('anon', 'public.simulate_commission_payment_refund(uuid)', 'EXECUTE') as anon_can_simulate_refund,
+        has_function_privilege('authenticated', 'public.simulate_commission_payment_success(uuid)', 'EXECUTE') as client_can_provider_pay,
+        has_function_privilege('service_role', 'public.simulate_commission_payment_success(uuid)', 'EXECUTE') as service_can_provider_pay
+    `);
+    assert.equal(paymentRpcGrants.rows[0].client_can_demo_pay, true);
+    assert.equal(paymentRpcGrants.rows[0].client_can_simulate_failure, true);
+    assert.equal(paymentRpcGrants.rows[0].anon_can_simulate_failure, false);
+    assert.equal(paymentRpcGrants.rows[0].client_can_simulate_refund, true);
+    assert.equal(paymentRpcGrants.rows[0].anon_can_simulate_refund, false);
+    assert.equal(paymentRpcGrants.rows[0].client_can_provider_pay, false);
+    assert.equal(paymentRpcGrants.rows[0].service_can_provider_pay, true);
 
     await db.exec(`
       update public.profiles
@@ -285,6 +356,20 @@ test('account lifecycle and commission integrations use complete PGlite dependen
     `);
 
     await applyMigration(db, 'account-lifecycle-hardening.sql');
+    const publicArtistProfile = await asReadOnlyUser(
+      db,
+      ids.activeClient,
+      `select
+        id, name, username, role, bio, interests, avatar_data_url, is_pro,
+        accepting_commissions, onboarded, last_seen_at, artist_verification_status
+      from public.profiles
+      where id = $1`,
+      [ids.activeArtist],
+    );
+    assert.equal(publicArtistProfile.rows.length, 1);
+    assert.equal(publicArtistProfile.rows[0].role, 'artist');
+
+    await applyMigration(db, 'account-lifecycle-active-check-readonly.sql');
     await applyMigration(db, 'account-lifecycle-commission-integration.sql');
     await applyMigration(db, 'account-deletion-admin-review.sql');
     await db.exec(`
@@ -343,18 +428,363 @@ test('account lifecycle and commission integrations use complete PGlite dependen
       /Only artists|not owned/i,
     );
 
+    const demoService = await asUser(
+      db,
+      ids.activeArtist,
+      `select * from public.create_artist_commission_service(
+        'Demo service', 'Simulation test', 750, 'PHP', 5
+      )`,
+    );
+    const demoRequest = await asUser(
+      db,
+      ids.activeClient,
+      `select public.create_service_commission_request(
+        '${demoService.rows[0].service_id}', 'Demo commission', 'Payment flow test'
+      ) as result`,
+    );
+    const demoCommissionId = demoRequest.rows[0].result.commission_id;
+    await expectRejected(
+      asUser(db, ids.activeClient, `select public.create_commission_payment('${demoCommissionId}')`),
+      /Only accepted commissions/i,
+    );
+    await asUser(db, ids.activeArtist, `select public.accept_commission_request('${demoCommissionId}')`);
+
+    const firstDemoPayment = await asUser(
+      db,
+      ids.activeClient,
+      `select * from public.create_commission_payment('${demoCommissionId}')`,
+    );
+    assert.equal(Number(firstDemoPayment.rows[0].amount), 750);
+    const duplicatePendingPayment = await asUser(
+      db,
+      ids.activeClient,
+      `select * from public.create_commission_payment('${demoCommissionId}')`,
+    );
+    assert.equal(duplicatePendingPayment.rows[0].id, firstDemoPayment.rows[0].id);
+
+    await expectRejected(
+      asUser(
+        db,
+        ids.activeClient,
+        `select public.simulate_commission_payment_demo_success('${firstDemoPayment.rows[0].id}')`,
+      ),
+      /DEMO_PAYMENTS_DISABLED/i,
+    );
+    await expectRejected(
+      asUser(
+        db,
+        ids.activeClient,
+        `select public.simulate_commission_payment_failure('${firstDemoPayment.rows[0].id}')`,
+      ),
+      /DEMO_PAYMENTS_DISABLED/i,
+    );
+
+    await setDemoPaymentsEnabled(db, true);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_failure('${firstDemoPayment.rows[0].id}')`,
+      ),
+      /Payment not found/i,
+    );
+    await asUser(
+      db,
+      ids.activeClient,
+      `select public.simulate_commission_payment_failure('${firstDemoPayment.rows[0].id}')`,
+    );
+    assert.equal((await asUser(
+      db,
+      ids.activeArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    )).rows.length, 0);
+    const retriedDemoPayment = await asUser(
+      db,
+      ids.activeClient,
+      `select * from public.create_commission_payment('${demoCommissionId}')`,
+    );
+    assert.notEqual(retriedDemoPayment.rows[0].id, firstDemoPayment.rows[0].id);
+    await expectRejected(
+      asUser(
+        db,
+        ids.activeArtist,
+        `select public.simulate_commission_payment_demo_success('${retriedDemoPayment.rows[0].id}')`,
+      ),
+      /Only client accounts/i,
+    );
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_demo_success('${retriedDemoPayment.rows[0].id}')`,
+      ),
+      /Payment not found/i,
+    );
+
+    const simulatedPayment = await asUser(
+      db,
+      ids.activeClient,
+      `select * from public.simulate_commission_payment_demo_success('${retriedDemoPayment.rows[0].id}')`,
+    );
+    assert.equal(simulatedPayment.rows[0].status, 'PAID');
+    assert.equal(simulatedPayment.rows[0].provider, 'DEMO_SIMULATION');
+    assert.ok(simulatedPayment.rows[0].demo_paid_at);
+    assert.equal(simulatedPayment.rows[0].provider_verified_at, null);
+
+    const duplicateSuccess = await asUser(
+      db,
+      ids.activeClient,
+      `select * from public.simulate_commission_payment_demo_success('${retriedDemoPayment.rows[0].id}')`,
+    );
+    assert.equal(duplicateSuccess.rows[0].id, simulatedPayment.rows[0].id);
+    const activeArtistEarnings = await asUser(
+      db,
+      ids.activeArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    );
+    assert.equal(activeArtistEarnings.rows.length, 1);
+    assert.equal(activeArtistEarnings.rows[0].earnings_category, 'PENDING');
+    assert.equal(activeArtistEarnings.rows[0].client_name, 'Client One');
+    assert.equal(activeArtistEarnings.rows[0].commission_title, 'Demo commission');
+    assert.equal(Number(activeArtistEarnings.rows[0].amount), 750);
+    assert.equal((await asUser(
+      db,
+      ids.activeClient,
+      'select * from public.list_my_demo_commission_earnings()',
+    )).rows.length, 0);
+    assert.equal((await asUser(
+      db,
+      ids.secondArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    )).rows.length, 0);
+
+    await setDemoPaymentsEnabled(db, false);
+    await expectRejected(
+      db.query(`update public.commissions set status = 'IN_PROGRESS' where id = '${demoCommissionId}'`),
+      /PAYMENT_PROVIDER_VERIFICATION_REQUIRED/i,
+    );
+    await setDemoPaymentsEnabled(db, true);
+    await db.query(`update public.commissions set status = 'IN_PROGRESS' where id = '${demoCommissionId}'`);
+    await db.query(`update public.commissions set status = 'COMPLETED' where id = '${demoCommissionId}'`);
+    const completedArtistEarnings = await asUser(
+      db,
+      ids.activeArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    );
+    assert.equal(completedArtistEarnings.rows[0].earnings_category, 'COMPLETED');
+
+    const secondArtistService = await asUser(
+      db,
+      ids.secondArtist,
+      `select * from public.create_artist_commission_service(
+        'Refund demo service', 'Cancellation test', 500, 'PHP', 4
+      )`,
+    );
+    const refundRequest = await asUser(
+      db,
+      ids.secondClient,
+      `select public.create_service_commission_request(
+        '${secondArtistService.rows[0].service_id}', 'Refund demo commission', 'Refund test'
+      ) as result`,
+    );
+    const refundCommissionId = refundRequest.rows[0].result.commission_id;
+    await asUser(db, ids.secondArtist, `select public.accept_commission_request('${refundCommissionId}')`);
+    const refundPayment = await asUser(
+      db,
+      ids.secondClient,
+      `select * from public.create_commission_payment('${refundCommissionId}')`,
+    );
+    await asUser(
+      db,
+      ids.secondClient,
+      `select public.simulate_commission_payment_demo_success('${refundPayment.rows[0].id}')`,
+    );
+    await asUser(
+      db,
+      ids.secondClient,
+      `select public.cancel_commission('${refundCommissionId}', 'Demo cancellation')`,
+    );
+    const cancelledEarnings = await asUser(
+      db,
+      ids.secondArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    );
+    assert.equal(cancelledEarnings.rows[0].earnings_category, 'CANCELLED');
+
+    await setDemoPaymentsEnabled(db, false);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+      ),
+      /DEMO_PAYMENTS_DISABLED/i,
+    );
+    await setDemoPaymentsEnabled(db, true);
+    await expectRejected(
+      asUser(
+        db,
+        ids.activeClient,
+        `select public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+      ),
+      /Payment not found/i,
+    );
+
+    await db.query(`
+      update public.commission_payments
+      set provider = 'XENDIT',
+          provider_reference = 'provider-refund-unverified',
+          demo_paid_at = null
+      where id = '${refundPayment.rows[0].id}'
+    `);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+      ),
+      /explicitly marked demo payments/i,
+    );
+    const unverifiedRefundState = await db.query(`select status, refunded_at
+      from public.commission_payments where id = '${refundPayment.rows[0].id}'`);
+    assert.equal(unverifiedRefundState.rows[0].status, 'PAID');
+    assert.equal(unverifiedRefundState.rows[0].refunded_at, null);
+
+    await db.query(`
+      update public.commission_payments
+      set provider_verified_at = now()
+      where id = '${refundPayment.rows[0].id}'
+    `);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+      ),
+      /Provider-verified payments/i,
+    );
+    assert.equal((await db.query(
+      `select status from public.commission_payments where id = '${refundPayment.rows[0].id}'`,
+    )).rows[0].status, 'PAID');
+    await db.query(`
+      update public.commission_payments
+      set provider = 'DEMO_SIMULATION',
+          provider_reference = null,
+          provider_verified_at = null,
+          demo_paid_at = now()
+      where id = '${refundPayment.rows[0].id}'
+    `);
+
+    const simulatedDemoRefund = await asUser(
+      db,
+      ids.secondClient,
+      `select * from public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+    );
+    assert.equal(simulatedDemoRefund.rows[0].status, 'REFUNDED');
+    assert.equal(Number(simulatedDemoRefund.rows[0].refunded_amount), 500);
+    const duplicateRefund = await asUser(
+      db,
+      ids.secondClient,
+      `select * from public.simulate_commission_payment_refund('${refundPayment.rows[0].id}')`,
+    );
+    assert.equal(duplicateRefund.rows[0].status, 'REFUNDED');
+    assert.equal(Number(duplicateRefund.rows[0].refunded_amount), 500);
+    const refundedEarnings = await asUser(
+      db,
+      ids.secondArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    );
+    assert.equal(refundedEarnings.rows[0].earnings_category, 'REFUNDED');
+    const isolatedArtistEarnings = await asUser(
+      db,
+      ids.activeArtist,
+      'select * from public.list_my_demo_commission_earnings()',
+    );
+    assert.equal(isolatedArtistEarnings.rows.length, 1);
+    assert.equal(isolatedArtistEarnings.rows[0].commission_id, demoCommissionId);
+
+    const unverifiedService = await asUser(
+      db,
+      ids.secondArtist,
+      `select * from public.create_artist_commission_service(
+        'Unverified payment service', 'Start-gate test', 300, 'PHP', 3
+      )`,
+    );
+    const unverifiedRequest = await asUser(
+      db,
+      ids.secondClient,
+      `select public.create_service_commission_request(
+        '${unverifiedService.rows[0].service_id}', 'Unverified payment commission', 'Start gate'
+      ) as result`,
+    );
+    const unverifiedCommissionId = unverifiedRequest.rows[0].result.commission_id;
+    await asUser(db, ids.secondArtist, `select public.accept_commission_request('${unverifiedCommissionId}')`);
+    const unverifiedPayment = await asUser(
+      db,
+      ids.secondClient,
+      `select * from public.create_commission_payment('${unverifiedCommissionId}')`,
+    );
+    await db.query(`
+      update public.commission_payments
+      set provider = 'XENDIT', provider_reference = 'test-provider-pending'
+      where id = '${unverifiedPayment.rows[0].id}'
+    `);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_failure('${unverifiedPayment.rows[0].id}')`,
+      ),
+      /unassociated mock payments/i,
+    );
+    assert.equal((await db.query(
+      `select status from public.commission_payments where id = '${unverifiedPayment.rows[0].id}'`,
+    )).rows[0].status, 'PENDING');
+    await db.query(`
+      update public.commission_payments
+      set status = 'PAID', paid_at = now(), provider_verified_at = now()
+      where id = '${unverifiedPayment.rows[0].id}'
+    `);
+    await expectRejected(
+      asUser(
+        db,
+        ids.secondClient,
+        `select public.simulate_commission_payment_failure('${unverifiedPayment.rows[0].id}')`,
+      ),
+      /Provider-verified payments/i,
+    );
+    assert.equal((await db.query(
+      `select status from public.commission_payments where id = '${unverifiedPayment.rows[0].id}'`,
+    )).rows[0].status, 'PAID');
+    await db.query(`
+      update public.commission_payments
+      set provider_verified_at = null
+      where id = '${unverifiedPayment.rows[0].id}'
+    `);
+    await expectRejected(
+      db.exec(`update public.commissions set status = 'IN_PROGRESS' where id = '${unverifiedCommissionId}'`),
+      /PAYMENT_PROVIDER_VERIFICATION_REQUIRED/i,
+    );
+    await setDemoPaymentsEnabled(db, false);
+    await db.query(`
+      update public.commission_payments
+      set provider_verified_at = now()
+      where id = '${unverifiedPayment.rows[0].id}'
+    `);
+    await db.query(`update public.commissions set status = 'IN_PROGRESS' where id = '${unverifiedCommissionId}'`);
+
     const activeDiscovery = await asUser(
       db,
       ids.activeClient,
       `select * from public.list_active_artist_commission_services('${ids.activeArtist}')`,
     );
-    assert.equal(activeDiscovery.rows.length, 1);
+    assert.equal(activeDiscovery.rows.length, 2);
 
     const activeRequest = await asUser(
       db,
       ids.activeClient,
       `select public.create_service_commission_request(
-        (select id from public.artist_commission_services where artist_id = '${ids.activeArtist}'),
+        '${activeService.rows[0].service_id}',
         'Active request',
         'Normal active-user request'
       ) as result`,
@@ -574,10 +1004,11 @@ test('account lifecycle and commission integrations use complete PGlite dependen
     `);
     await db.query(`
       insert into public.commission_payments (
-        commission_id, payer_id, payee_id, amount, currency, status, created_by, paid_at
+        commission_id, payer_id, payee_id, amount, currency, status,
+        provider, demo_paid_at, created_by, paid_at
       )
       select id, '${ids.reviewClient}', '${ids.reviewArtist}', 25, 'USD', 'PAID',
-             '${ids.reviewClient}', now()
+             'DEMO_SIMULATION', now(), '${ids.reviewClient}', now()
       from public.commissions
       where order_ref = 'pending-refund-commission'
     `);
@@ -586,6 +1017,7 @@ test('account lifecycle and commission integrations use complete PGlite dependen
       /refund/i,
     );
 
+    await setDemoPaymentsEnabled(db, true);
     const simulatedRefund = await asUser(
       db,
       ids.reviewClient,

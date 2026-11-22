@@ -170,8 +170,7 @@ begin
   select lifecycle.status
     into v_status
   from public.account_lifecycle as lifecycle
-  where lifecycle.user_id = auth.uid()
-  for key share;
+  where lifecycle.user_id = auth.uid();
 
   return v_status = 'ACTIVE';
 end;

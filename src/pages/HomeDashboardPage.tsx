@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { initialsFor } from '../lib/supabaseData';
 import { acceptCommissionRequest, getCommissionDueAt, listCommissionProgress, listMyCommissions, rejectCommissionRequest, type MyCommission } from '../lib/supabaseRevisions';
-import { listMyPaidCommissionPayments, type CommissionPayment } from '../lib/supabasePayments';
+import { listMyDemoCommissionEarnings, listMyPaidCommissionPayments, type CommissionPayment, type DemoCommissionEarning } from '../lib/supabasePayments';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { useMockToast } from '../components/ui/MockToast';
 import { useNotifications } from '../context/NotificationContext';
@@ -45,7 +45,10 @@ function commissionSnapshotLabel(commission: MyCommission): string {
   return details.filter((detail): detail is string => Boolean(detail)).join(' · ');
 }
 
-function paidTotalsByCurrency(payments: CommissionPayment[], now = new Date()): Array<{ currency: string; amount: number; count: number }> {
+function paidTotalsByCurrency(
+  payments: Array<Pick<CommissionPayment, 'paid_at' | 'amount' | 'currency'>>,
+  now = new Date(),
+): Array<{ currency: string; amount: number; count: number }> {
   const totals = new Map<string, { amount: number; count: number }>();
   for (const payment of payments) {
     const paidAt = payment.paid_at ? new Date(payment.paid_at) : null;
@@ -62,7 +65,10 @@ function paidTotalsByCurrency(payments: CommissionPayment[], now = new Date()): 
   return Array.from(totals, ([currency, total]) => ({ currency, ...total }));
 }
 
-function paidPaymentHistoryPoints(payments: CommissionPayment[], now = new Date()): string | null {
+function paidPaymentHistoryPoints(
+  payments: Array<Pick<CommissionPayment, 'paid_at'>>,
+  now = new Date(),
+): string | null {
   const monthlyCounts = Array.from({ length: 6 }, () => 0);
   for (const payment of payments) {
     if (!payment.paid_at) continue;
@@ -110,6 +116,9 @@ export function HomeDashboardPage() {
   const [paidCommissionPayments, setPaidCommissionPayments] = useState<CommissionPayment[]>([]);
   const [loadingPaidCommissionPayments, setLoadingPaidCommissionPayments] = useState(true);
   const [paidCommissionPaymentsError, setPaidCommissionPaymentsError] = useState(false);
+  const [demoCommissionEarnings, setDemoCommissionEarnings] = useState<DemoCommissionEarning[]>([]);
+  const [loadingDemoCommissionEarnings, setLoadingDemoCommissionEarnings] = useState(true);
+  const [demoCommissionEarningsError, setDemoCommissionEarningsError] = useState(false);
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [commissionProgressById, setCommissionProgressById] = useState<Record<string, number>>({});
   const [commissionProgressFailedById, setCommissionProgressFailedById] = useState<Record<string, boolean>>({});
@@ -133,9 +142,23 @@ export function HomeDashboardPage() {
     : commissionTab === 'pending'
       ? (user?.role === 'artist' ? [] : pendingCommissions)
       : completedCommissions;
-  const paidCurrencyTotals = useMemo(() => paidTotalsByCurrency(paidCommissionPayments), [paidCommissionPayments]);
-  const paidHistoryPoints = useMemo(() => paidPaymentHistoryPoints(paidCommissionPayments), [paidCommissionPayments]);
+  const eligibleDemoPayments = useMemo(
+    () => demoCommissionEarnings.filter((earning) => earning.payment_status === 'PAID'
+      && (earning.earnings_category === 'PENDING' || earning.earnings_category === 'COMPLETED')
+      && !earning.refunded_at),
+    [demoCommissionEarnings],
+  );
+  const revenueUsesDemoPayments = user?.role === 'artist'
+    && !loadingDemoCommissionEarnings
+    && eligibleDemoPayments.length > 0;
+  const revenuePayments = revenueUsesDemoPayments ? eligibleDemoPayments : paidCommissionPayments;
+  const paidCurrencyTotals = useMemo(() => paidTotalsByCurrency(revenuePayments), [revenuePayments]);
+  const paidHistoryPoints = useMemo(() => paidPaymentHistoryPoints(revenuePayments), [revenuePayments]);
   const currentMonthPaidCount = paidCurrencyTotals.reduce((count, total) => count + total.count, 0);
+  const revenuePaymentsLoading = !revenueUsesDemoPayments
+    && (loadingPaidCommissionPayments || (user?.role === 'artist' && loadingDemoCommissionEarnings));
+  const revenuePaymentsError = !revenueUsesDemoPayments
+    && paidCommissionPaymentsError;
   const pendingRequestCount = pendingCommissions.length;
   const recentCommissionActivity = useMemo(() => notifications
     .filter((notification) => notification.notification_type === 'commission' || notification.notification_type === 'revision')
@@ -258,6 +281,36 @@ export function HomeDashboardPage() {
   }, [user?.id, user?.role]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !user || user.role !== 'artist') {
+      setDemoCommissionEarnings([]);
+      setDemoCommissionEarningsError(false);
+      setLoadingDemoCommissionEarnings(false);
+      return;
+    }
+
+    let active = true;
+    setDemoCommissionEarnings([]);
+    setDemoCommissionEarningsError(false);
+    setLoadingDemoCommissionEarnings(true);
+    listMyDemoCommissionEarnings()
+      .then((earnings) => {
+        if (active) setDemoCommissionEarnings(earnings);
+      })
+      .catch(() => {
+        if (active) {
+          setDemoCommissionEarnings([]);
+          setDemoCommissionEarningsError(true);
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingDemoCommissionEarnings(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
     if (!isSupabaseConfigured || !user || activeCommissions.length === 0) {
       setCommissionProgressById({});
       setCommissionProgressFailedById({});
@@ -285,7 +338,7 @@ export function HomeDashboardPage() {
   }, [user?.id, activeCommissions]);
 
   const refreshDashboard = async () => {
-    if (dashboardRefreshInProgress.current || loadingCommissions || loadingPaidCommissionPayments || loadingNotifications) return;
+    if (dashboardRefreshInProgress.current || loadingCommissions || loadingPaidCommissionPayments || loadingDemoCommissionEarnings || loadingNotifications) return;
     if (!user || !isSupabaseConfigured) {
       await refreshNotifications();
       return;
@@ -293,9 +346,10 @@ export function HomeDashboardPage() {
     dashboardRefreshInProgress.current = true;
     setRefreshingDashboard(true);
     try {
-      const [commissionsResult, paymentsResult] = await Promise.allSettled([
+      const [commissionsResult, paymentsResult, demoEarningsResult] = await Promise.allSettled([
         listMyCommissions(user.id),
         listMyPaidCommissionPayments(user.id, user.role),
+        user.role === 'artist' ? listMyDemoCommissionEarnings() : Promise.resolve([]),
       ]);
       if (commissionsResult.status === 'fulfilled') {
         setMyCommissions(commissionsResult.value);
@@ -310,6 +364,12 @@ export function HomeDashboardPage() {
         setPaidCommissionPaymentsError(false);
       } else {
         setPaidCommissionPaymentsError(true);
+      }
+      if (demoEarningsResult.status === 'fulfilled') {
+        setDemoCommissionEarnings(demoEarningsResult.value);
+        setDemoCommissionEarningsError(false);
+      } else {
+        setDemoCommissionEarningsError(true);
       }
       await refreshNotifications();
     } finally {
@@ -466,11 +526,16 @@ export function HomeDashboardPage() {
                 <span className="t-xs home-revenue-label">
                   {user?.role === 'artist' ? 'Revenue · This month' : 'Spending · This month'}
                 </span>
+                {(revenueUsesDemoPayments || (user?.role === 'artist' && demoCommissionEarningsError)) && (
+                  <span className="badge home-revenue-badge" role={demoCommissionEarningsError ? 'status' : undefined}>
+                    {demoCommissionEarningsError ? 'DEMO DATA UNAVAILABLE' : 'DEMO ONLY'}
+                  </span>
+                )}
               </div>
 
-              {loadingPaidCommissionPayments ? (
-                <div className="t-sm fw-600 home-revenue-loading">Loading...</div>
-              ) : paidCommissionPaymentsError ? (
+              {revenuePaymentsLoading ? (
+                <div className="t-sm fw-600 home-revenue-loading" role="status">Loading...</div>
+              ) : revenuePaymentsError ? (
                 <div className="t-sm fw-600 home-revenue-loading" role="alert">Could not load payment summary.</div>
               ) : paidCurrencyTotals.length === 0 ? (
                 <>
@@ -503,14 +568,20 @@ export function HomeDashboardPage() {
                 </>
               )}
 
-              <div className="home-revenue-chart" role="img" aria-label="Paid commission activity over the past six months">
+              <div
+                className="home-revenue-chart"
+                role="img"
+                aria-label={revenueUsesDemoPayments
+                  ? 'Simulated paid commission activity over the past six months'
+                  : 'Paid commission activity over the past six months'}
+              >
                 {paidHistoryPoints ? (
                   <svg viewBox="0 0 260 36" className="home-revenue-graph-svg" aria-hidden="true">
                     <polyline points={paidHistoryPoints} />
                   </svg>
                 ) : (
                   <div className="home-revenue-chart-empty">
-                    {paidCommissionPayments.length > 0 ? 'Paid history unavailable' : 'No paid history yet'}
+                    {revenuePayments.length > 0 ? 'Paid history unavailable' : 'No paid history yet'}
                   </div>
                 )}
               </div>
@@ -522,7 +593,9 @@ export function HomeDashboardPage() {
               onClick={() => navigate('/home/analytics')}
             >
               <div className="row-between home-revenue-header">
-                <span className="t-xs home-revenue-label">Revenue · This month</span>
+                <span className="t-xs home-revenue-label">
+                  {user?.role === 'artist' ? 'Revenue · This month' : 'Spending · This month'}
+                </span>
               </div>
               <div className="mono home-revenue-amount">
                 {user?.role === 'artist' ? 'No revenue history yet' : 'No spending history yet'}
@@ -758,7 +831,7 @@ export function HomeDashboardPage() {
                   className="home-refresh-button"
                   aria-label="Refresh dashboard"
                   title="Refresh dashboard"
-                  disabled={loadingCommissions || loadingPaidCommissionPayments || loadingNotifications || refreshingDashboard}
+                  disabled={loadingCommissions || loadingPaidCommissionPayments || loadingDemoCommissionEarnings || loadingNotifications || refreshingDashboard}
                   onClick={() => void refreshDashboard()}
                 >
                   <Icon name="refresh" />

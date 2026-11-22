@@ -102,6 +102,9 @@
   background: rgba(246, 196, 83, 0.18);
   border: 1px solid rgba(246, 196, 83, 0.2);
   color: #ffe7a0;
+  padding: 2px 6px;
+  font-size: 9px;
+  line-height: 1.2;
 }
 
 .home-revenue-card .mono {

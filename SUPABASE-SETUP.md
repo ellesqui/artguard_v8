@@ -364,11 +364,18 @@ The forward-only database migration order is:
    `start_commission(uuid)` payment guard; this revokes authenticated simulated
    success and direct payment-table writes, and requires provider verification
    before paid-gated commissions can start.
-5. `supabase/pro-entitlement-hardening.sql` — after both
+5. `supabase/commission-demo-payments.sql` — after the payment lockdown and
+   current payment-start guard; this adds a separately authorized,
+   explicitly simulated payment path without setting `provider_verified_at`.
+6. `supabase/commission-demo-payment-security-hardening.sql` — after
+    `commission-demo-payments.sql` and the latest payment-start gate. It adds a
+    database-owner-controlled demo switch that defaults off and hardens demo
+    success, failure, refund, and commission-start checks.
+7. `supabase/pro-entitlement-hardening.sql` — after both
    `artist-verification-foundation.sql` and
    `artist-commission-availability.sql`, so neither earlier grant can restore
    authenticated `is_pro` writes.
-6. `supabase/profile-access-hardening.sql` — the profile **contract** stage;
+8. `supabase/profile-access-hardening.sql` — the profile **contract** stage;
    apply only after the frontend and legacy-client gate below.
 
 Google sign-up also depends on `supabase/google-signup-role-rpc.sql`. This
@@ -471,12 +478,15 @@ authenticated access to the success RPC, and the current
 `authenticated` execution from `simulate_commission_payment_success(uuid)`,
 preserves `service_role` execution, and hardens the function's search path. It
 also revokes table- and column-level payment writes from client roles and adds
-`provider_verified_at`. A trigger blocks payment-gated commission starts unless
-a matching PAID record has that marker. No current frontend or RPC sets it.
-Existing `PAID` records remain unchanged and unverified; they cannot authorize
-new starts, while already-started commissions are not changed. The migration
-does not add a provider or make any payment real. Review payment records and
-active commissions using trusted evidence before staging or production use.
+`provider_verified_at`. At this migration stage, a trigger blocks payment-gated
+commission starts unless a matching PAID record has that marker. The later
+`commission-demo-payments.sql` migration adds a separate authenticated demo
+marker path without setting provider verification. No current frontend or RPC
+sets `provider_verified_at`. Existing `PAID` records remain unchanged and
+unverified; they cannot authorize new starts, while already-started commissions
+are not changed. Neither migration adds a provider or makes any payment real.
+Review payment records and active commissions using trusted evidence before
+staging or production use.
 
 The contract migration removes table-wide and sensitive-column profile reads,
 then grants authenticated clients only the safe public profile columns.
@@ -502,19 +512,40 @@ this stage.
    Existing frontend bundles may display
    a now-disabled simulation control until refreshed; the database denies the
    call regardless.
-4. Deploy the updated frontend. A Vercel deployment does **not** invalidate
+4. For the school-project demo flow, apply
+   `commission-demo-payments.sql` after the lockdown and current payment-start
+   guard. Its authenticated RPC is limited to the paying client, accepted
+   commissions, and the stored agreed price. It marks the row as
+   `DEMO_SIMULATION` with `demo_paid_at`; it never sets
+   `provider_verified_at`. This adds no real payment provider or money movement.
+5. Apply `commission-demo-payment-security-hardening.sql` after the demo
+   payment migration and latest payment-start gate. The configuration table is
+   off by default and has no privileges for `anon`, `authenticated`, or
+   `service_role`. For staging tests only, an authorized database owner may
+   enable it in the SQL editor:
+
+   ```sql
+   update public.commission_demo_payment_config
+   set enabled = true, updated_at = now()
+   where singleton = true;
+   ```
+
+   Set `enabled = false` again after staging tests. Do not enable this switch in
+   production; leaving the default disabled blocks all simulated success,
+   failure, refund, and demo-paid commission-start paths.
+6. Deploy the updated frontend. A Vercel deployment does **not** invalidate
    JavaScript already loaded in open tabs.
-5. Verify `get_my_profile()` and all public profile consumers, including
+7. Verify `get_my_profile()` and all public profile consumers, including
    onboarding, account settings, Marketplace/Discover, chat, commission
    workspaces, admin verification, and protected previews. Exercise non-payment
-   commission workflows; payment-gated commissions cannot start until a trusted
-   provider integration exists.
-6. Establish the legacy-client deprecation gate: notify users, allow active
+   commission workflows and confirm that demo-only payments remain visibly
+   labeled and never claim provider verification.
+8. Establish the legacy-client deprecation gate: notify users, allow active
    commission work to reach a safe saved state, and have users close/reopen or
    refresh the app while idle. Review Supabase API logs for legacy
    `profiles?select=*` requests and wait through an owner-defined observation
    period. Do not infer client refresh from Vercel deployment alone.
-7. Apply `profile-access-hardening.sql` only after the owner confirms the
+9. Apply `profile-access-hardening.sql` only after the owner confirms the
    legacy-client gate is satisfied. Verify profile projections, admin review,
    Storage previews, signup, and the active commission/chat workflows again.
 
@@ -552,15 +583,50 @@ updated.
 
 `public.commission_payments` persists participant IDs, amount, currency,
 provider/reference placeholders, and a status. The app can create records and
-the failure/refund actions remain simulations that update database state only.
-After `commission-payment-simulation-lockdown.sql`, authenticated clients can
-no longer call the simulated-success RPC or write payment rows directly; only
-a trusted `service_role` caller can execute the simulation. The simulation does
-not set `provider_verified_at`, so it cannot authorize a commission start.
-There is still no checkout provider, verified webhook, idempotency ledger,
-escrow, or artist payout integration. A stored `PAID` status is not proof that a
-provider charged or settled funds. Existing `PAID` rows remain unchanged and
-have no verification marker; reconcile them using trusted evidence.
+failure/refund actions update simulated state only. The lockdown keeps
+`simulate_commission_payment_success(uuid)` unavailable to authenticated
+clients and preserves its `service_role`-only permission.
+
+The forward-only `commission-demo-payments.sql` migration adds the distinct
+`simulate_commission_payment_demo_success(uuid)` RPC. It allows only the
+authenticated paying Client to simulate a payment for their own accepted,
+priced commission; it serializes against cancellation and is idempotent for a
+completed demo payment. The row is marked `DEMO_SIMULATION` with
+`demo_paid_at`, while `provider_verified_at` remains NULL. The payment-start
+guard accepts either a genuine trusted provider-verification marker or this
+separately authorized demo marker. It does not weaken the provider-verification
+path or allow browser table writes. The artist earnings query uses
+`auth.uid()`, payment RLS, and commission status to classify pending,
+completed, cancelled, and refunded demo entries; refunds and cancellations
+are excluded from earnings totals.
+
+The forward-only `commission-demo-payment-security-hardening.sql` migration
+adds `public.commission_demo_payment_config`, whose single switch is inserted
+as `false`. Table privileges are revoked from `PUBLIC`, `anon`, `authenticated`,
+and `service_role`; only an authorized database configuration process can
+change it. Demo success, failure, and refund RPCs all check the switch inside
+PostgreSQL. Mock failure is restricted to the paying Client's eligible,
+unassociated pending record. Mock refund is restricted to the paying Client's
+cancelled commission and explicitly marked demo payment, preserving the
+existing full-refund behavior. Provider-associated and provider-verified
+payments are rejected by both simulation mutations. The commission-start
+trigger accepts a demo marker only while the switch is enabled; a valid
+`provider_verified_at` payment remains eligible independently of the switch.
+The demo RPCs remain `authenticated`-only, while
+`simulate_commission_payment_success(uuid)` remains `service_role`-only.
+
+The switch defaults off in every new environment. Enable it only in a
+non-production staging database through the authorized database-owner SQL
+process above, then disable it after testing. No browser variable, RPC, or
+service-role client can enable it. Do not enable mock payment mutations in
+production.
+
+All such transactions are **SIMULATED / DEMO ONLY**. No real money is charged,
+received, transferred, withdrawn, or held. There is still no checkout provider,
+verified webhook, provider idempotency ledger, escrow, or artist payout
+integration. A stored `PAID` status alone is not proof that a provider charged
+or settled funds. Existing `PAID` rows remain unchanged; their missing
+verification/demo markers are not inferred.
 
 Before real payment processing, select a provider and add a server-only checkout
 creation path, verify webhook signatures and event ownership server-side,
@@ -653,8 +719,9 @@ idempotent
 confirmed schema-cache/function recovery when the lifecycle table and all
 account-lifecycle protections are already installed. If those protections
 are absent or uncertain, validate and apply the full lifecycle migration
-through the normal staged process instead. No lifecycle SQL has been applied
-to production as part of this task.
+through the normal staged process instead. The repository cannot establish
+which lifecycle function body is currently deployed; inspect migration history
+and the live function definition before choosing a recovery script.
 
 Recommended rollout:
 
@@ -675,8 +742,14 @@ Recommended rollout:
    exists with RLS enabled and confirm the service table's existing policies.
    The lifecycle migration intentionally aborts if a required table is missing
    or RLS is off; do not "fix" a failed preflight by blindly enabling RLS.
-5. Apply `supabase/account-lifecycle-hardening.sql` in staging, then
-   `supabase/account-lifecycle-commission-integration.sql`, then
+5. Apply `supabase/account-lifecycle-hardening.sql` in staging. Its
+   `is_my_account_active()` helper must not row-lock because restrictive RLS
+   policies call it during read-only GET requests. For an existing database
+   with the older row-locking function body, apply
+   `supabase/account-lifecycle-active-check-readonly.sql` after verifying the
+   live definition; do not rerun the full lifecycle migration solely for this
+   correction. Then apply
+   `supabase/account-lifecycle-commission-integration.sql`, followed by
    `supabase/account-deletion-admin-review.sql` after
    `profile-access-expand.sql` and its `is_current_user_admin()` helper. The
    commission integration must follow both the lifecycle migration and the
