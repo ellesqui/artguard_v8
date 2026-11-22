@@ -1680,10 +1680,10 @@ export function CommissionWorkspacePage() {
                     <Icon name="check-circle" />
                   </div>
                   <div className="row-between workspace-demo-payment-dialog-heading">
-                    <h2 id="demo-payment-title">Demo receipt</h2>
+                    <h2 id="demo-payment-title">Payment receipt</h2>
                     <span className="badge badge-warning">SIMULATED</span>
                   </div>
-                  <p>Your payment simulation was recorded successfully. No real money was charged, received, held, or transferred.</p>
+                  <p>Your simulated payment has been recorded.</p>
                   <div className="workspace-demo-payment-receipt">
                     <div className="workspace-demo-payment-receipt-amount">
                       <span className="t-xs c-low">Simulated amount</span>
@@ -1699,11 +1699,11 @@ export function CommissionWorkspacePage() {
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Payment method</span>
-                      <strong>ArtGuard demo transfer</strong>
+                      <strong>Simulated transfer</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Transaction reference</span>
-                      <strong className="mono">DEMO-{demoPaymentReceipt.id.toUpperCase()}</strong>
+                      <strong className="mono">AG-{demoPaymentReceipt.id.toUpperCase()}</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Date and time</span>
@@ -1711,10 +1711,10 @@ export function CommissionWorkspacePage() {
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Status</span>
-                      <strong className="c-success">PAID · SIMULATED</strong>
+                      <strong className="c-success">PAID</strong>
                     </div>
                   </div>
-                  <div className="workspace-demo-payment-disclaimer">DEMO ONLY — this receipt confirms a database-recorded simulation, not a real-world transfer.</div>
+                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
                   <div className="account-dialog-actions">
                     <button type="button" className="btn btn-primary btn-sm" onClick={closeDemoPaymentDialog}>Done</button>
                   </div>
@@ -1722,21 +1722,22 @@ export function CommissionWorkspacePage() {
               ) : demoPaymentDialogStep === 'processing' ? (
                 <div className="workspace-demo-payment-processing" role="status" aria-live="polite">
                   <span className="workspace-demo-payment-spinner" aria-hidden="true" />
-                  <span className="badge badge-warning">DEMO ONLY</span>
-                  <h2 id="demo-payment-title">Processing simulation</h2>
-                  <p>Recording the simulated payment with ArtGuard. No bank, card, or wallet is being charged.</p>
+                  <span className="badge badge-warning">SIMULATED</span>
+                  <h2 id="demo-payment-title">Processing payment</h2>
+                  <p>Recording your simulated payment.</p>
                   <div className="t-xs c-low">Please wait while the payment record is confirmed.</div>
+                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
                 </div>
               ) : (
                 <>
                   <div className="row-between workspace-demo-payment-dialog-heading">
-                    <h2 id="demo-payment-title">Demo checkout</h2>
-                    <span className="badge badge-warning">DEMO ONLY</span>
+                    <h2 id="demo-payment-title">Payment confirmation</h2>
+                    <span className="badge badge-warning">SIMULATED</span>
                   </div>
-                  <p>Review the agreed commission details before recording a simulated payment.</p>
+                  <p>Review your payment details before confirming.</p>
                   <div className="workspace-demo-payment-receipt">
                     <div className="workspace-demo-payment-receipt-amount">
-                      <span className="t-xs c-low">Amount due · simulation</span>
+                      <span className="t-xs c-low">Amount due</span>
                       <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
@@ -1749,15 +1750,15 @@ export function CommissionWorkspacePage() {
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Payment method</span>
-                      <strong>ArtGuard demo transfer</strong>
+                      <strong>Simulated transfer</strong>
                     </div>
                   </div>
-                  <div className="workspace-demo-payment-disclaimer">SIMULATED / DEMO ONLY. No payment credentials are requested and no real money moves.</div>
+                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
                   {paymentError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 10 }}>{paymentError}</div>}
                   <div className="account-dialog-actions">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={closeDemoPaymentDialog} disabled={paymentActionLoading}>Cancel</button>
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleConfirmDemoPayment()} disabled={paymentActionLoading}>
-                      Confirm Demo Payment
+                      Confirm payment
                     </button>
                   </div>
                 </>

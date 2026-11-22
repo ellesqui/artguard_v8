@@ -344,8 +344,21 @@
   padding: 18px !important;
 }
 
-.workspace-demo-payment-dialog {
+.account-dialog.workspace-demo-payment-dialog {
+  box-sizing: border-box;
+  width: min(100%, 460px);
   max-width: 460px;
+  max-height: calc(100dvh - 40px - var(--ag-overlay-bottom-clearance, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 5vw, 24px);
+  border: 1px solid var(--ag-border);
+  border-radius: var(--ag-r-lg);
+  background: var(--ag-surface);
+  background-image: none;
+  color: var(--ag-text-hi);
+  opacity: 1;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
 .workspace-demo-payment-dialog-heading {
