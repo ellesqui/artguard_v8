@@ -3,6 +3,7 @@
 -- Existing is_pro values are preserved; this only removes client write access.
 
 revoke update on table public.profiles from authenticated;
+revoke update (is_pro) on table public.profiles from authenticated;
 
 grant update (
   name,

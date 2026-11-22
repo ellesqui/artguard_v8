@@ -5,6 +5,7 @@ import { ScreenShell } from '../components/ui/ScreenShell';
 import { BottomNav } from '../components/ui/BottomNav';
 import { IconButton } from '../components/ui/IconButton';
 import { OptionsMenu } from '../components/ui/OptionsMenu';
+import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
 import { Icon } from '../assets/icons';
 import { ARTISTS, CURRENT_ARTIST } from '../data/mockData';
@@ -85,6 +86,7 @@ export function ArtistProfilePage() {
   const { user } = useAuth();
   const { startConversation } = useChat();
   const { toast, showToast } = useMockToast();
+  const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
   const [startingConversation, setStartingConversation] = useState(false);
   const [messageError, setMessageError] = useState<string>();
 
@@ -665,13 +667,22 @@ export function ArtistProfilePage() {
     }
   };
 
+  const reportProfileId = artistId ?? realProfile?.id;
   const profileHeaderControls = !isSelf && (
     <div className="artist-profile-header-controls">
       <IconButton icon="chevron-l" onClick={() => navigate(-1)} ariaLabel="Back" />
       <OptionsMenu
         ariaLabel="More options"
         items={[
-          { label: 'Report artist', onClick: () => showToast(`${profile.name} reported (mock)`) },
+          ...(reportProfileId && reportProfileId !== user?.id ? [{
+            label: 'Report artist',
+            onClick: () => setReportTarget({
+              type: 'PROFILE',
+              id: reportProfileId,
+              label: profile.name,
+              demoOnly: profile.source === 'mock',
+            }),
+          }] : []),
           { label: 'Block artist', onClick: () => showToast(`${profile.name} blocked (mock)`), danger: true },
         ]}
       />
@@ -1357,6 +1368,7 @@ export function ArtistProfilePage() {
         )}
       </div>
       {toast}
+      <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />
     </ScreenShell>
   );
 }

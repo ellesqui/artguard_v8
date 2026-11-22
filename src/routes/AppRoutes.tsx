@@ -29,6 +29,9 @@ import { AccountManagementPage } from '../pages/AccountManagementPage';
 import { ArtistVerificationPage } from '../pages/ArtistVerificationPage';
 import { ArtistCommissionServicesPage } from '../pages/ArtistCommissionServicesPage';
 import { AdminArtistVerificationsPage } from '../pages/AdminArtistVerificationsPage';
+import { AdminAccountDeletionRequestsPage } from '../pages/AdminAccountDeletionRequestsPage';
+import { AdminContentReportsPage } from '../pages/AdminContentReportsPage';
+import { MyReportsPage } from '../pages/MyReportsPage';
 import { NotificationsPage } from '../pages/NotificationsPage';
 import { FindArtistPage } from '../pages/FindArtistPage';
 import { RequireAuth } from './RequireAuth';
@@ -257,6 +260,34 @@ export function AppRoutes() {
             <RequireAdmin>
               <AdminArtistVerificationsPage />
             </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/account-deletion-requests"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AdminAccountDeletionRequestsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/reports"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AdminContentReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/profile/settings/reports"
+        element={
+          <RequireAuth>
+            <MyReportsPage />
           </RequireAuth>
         }
       />

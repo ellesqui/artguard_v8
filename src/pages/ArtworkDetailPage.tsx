@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ScreenShell } from '../components/ui/ScreenShell';
 import { IconButton } from '../components/ui/IconButton';
 import { OptionsMenu } from '../components/ui/OptionsMenu';
+import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
 import { Icon } from '../assets/icons';
@@ -33,6 +34,7 @@ export function ArtworkDetailPage() {
     refresh: refreshFeed,
   } = useArtworkFeed();
   const { toast, showToast } = useMockToast();
+  const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
   const [draft, setDraft] = useState('');
   const [commentSubmitError, setCommentSubmitError] = useState<string>();
   const [openingCommentProfileId, setOpeningCommentProfileId] = useState<string>();
@@ -136,13 +138,21 @@ export function ArtworkDetailPage() {
             ariaLabel="Back to Marketplace"
             style={{ background: 'rgba(0,0,0,0.35)', borderColor: 'rgba(255,255,255,0.2)' }}
           />
-          {!post.isSupabase && (
+          {user && post.artistId && post.artistId !== user.id && (
             <OptionsMenu
               ariaLabel="More options"
               triggerStyle={{ background: 'rgba(0,0,0,0.35)', borderColor: 'rgba(255,255,255,0.2)' }}
               items={[
-                { label: 'Share artwork', onClick: () => showToast('Link copied (mock)') },
-                { label: 'Report artwork', onClick: () => showToast('Artwork reported (mock)') },
+                ...(!post.isSupabase ? [{ label: 'Share artwork', onClick: () => showToast('Link copied (mock)') }] : []),
+                {
+                  label: 'Report artwork',
+                  onClick: () => setReportTarget({
+                    type: 'ARTWORK',
+                    id: post.id,
+                    label: post.title ?? 'artwork',
+                    demoOnly: !post.isSupabase,
+                  }),
+                },
               ]}
             />
           )}
@@ -333,6 +343,7 @@ export function ArtworkDetailPage() {
         {commentSubmitError && <div className="artwork-engagement-error" role="alert">{commentSubmitError}</div>}
       </div>
       {toast}
+      <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />
     </ScreenShell>
   );
 }

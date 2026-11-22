@@ -6,6 +6,7 @@ import { ScreenShell } from '../components/ui/ScreenShell';
 import './CommissionWorkspacePage.css';
 import { IconButton } from '../components/ui/IconButton';
 import { OptionsMenu } from '../components/ui/OptionsMenu';
+import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { RevisionRequests } from '../components/commission/RevisionRequests';
@@ -66,6 +67,7 @@ export function CommissionWorkspacePage() {
   const { toast, showToast } = useMockToast();
   const { user } = useAuth();
   const { startConversation } = useChat();
+  const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
 
   // A route param that matches one of the hardcoded demo Orders always
   // renders the existing mock workspace below, unchanged. Anything else
@@ -847,6 +849,19 @@ export function CommissionWorkspacePage() {
                 <div className="t-md fw-700">{realCommission.title}</div>
                 <div className="t-xs c-low">{realCommission.order_ref}</div>
               </div>
+              {user && (
+                <OptionsMenu
+                  ariaLabel="Commission options"
+                  items={[{
+                    label: 'Report commission issue',
+                    onClick: () => setReportTarget({
+                      type: 'COMMISSION',
+                      id: realCommission.id,
+                      label: realCommission.order_ref,
+                    }),
+                  }]}
+                />
+              )}
             </div>
           </div>
         }
@@ -1432,6 +1447,7 @@ export function CommissionWorkspacePage() {
             </section>
           </div>
         )}
+        <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />
         {toast}
       </ScreenShell>
     );
@@ -1456,7 +1472,15 @@ export function CommissionWorkspacePage() {
             ariaLabel="More options"
             items={[
               { label: 'Message client', onClick: () => navigate('/chat') },
-              { label: 'Report an issue', onClick: () => showToast('Issue reported (mock)') },
+              {
+                label: 'Report an issue',
+                onClick: () => setReportTarget({
+                  type: 'COMMISSION',
+                  id: order.id,
+                  label: order.id,
+                  demoOnly: true,
+                }),
+              },
             ]}
           />
         </div>
@@ -1581,6 +1605,7 @@ export function CommissionWorkspacePage() {
         <Icon name="upload" style={{ width: 16, height: 16 }} />
         Upload Milestone Artwork
       </button>
+      <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} demoOnly />
       {toast}
     </ScreenShell>
   );

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ScreenShell } from '../components/ui/ScreenShell';
 import { BottomNav } from '../components/ui/BottomNav';
 import { IconButton } from '../components/ui/IconButton';
+import { OptionsMenu } from '../components/ui/OptionsMenu';
+import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
 import { ArtworkCard } from '../components/ui/ArtworkCard';
 import { SegmentedControl } from '../components/ui/SegmentedControl';
@@ -222,6 +224,7 @@ export function MarketplacePage() {
   const [savingPost, setSavingPost] = useState(false);
   const [postEngagement, setPostEngagement] = useState<Record<string, { commentCount: number; applicationCount: number }>>({});
   const [openPostMenuId, setOpenPostMenuId] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
   const [pendingDeletePost, setPendingDeletePost] = useState<CommissionPost | null>(null);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [postDeleteError, setPostDeleteError] = useState<string | null>(null);
@@ -1415,46 +1418,62 @@ export function MarketplacePage() {
                           </div>
                         </div>
                       </div>
-                      {post.status !== 'OPEN' && (
-                        <span className="badge badge-accent">{post.status}</span>
-                      )}
-                      {isCurrentOwner && post.status === 'OPEN' && (
-                        <div className="commission-post-menu-wrap">
-                          <IconButton
-                            icon="dots"
-                            ariaLabel={`Options for ${post.title}`}
-                            onClick={() => setOpenPostMenuId((current) => current === post.id ? null : post.id)}
+                      <div className="row gap-8" style={{ alignItems: 'center' }}>
+                        {post.status !== 'OPEN' && (
+                          <span className="badge badge-accent">{post.status}</span>
+                        )}
+                        {isCurrentOwner && post.status === 'OPEN' && (
+                          <div className="commission-post-menu-wrap">
+                            <IconButton
+                              icon="dots"
+                              ariaLabel={`Options for ${post.title}`}
+                              onClick={() => setOpenPostMenuId((current) => current === post.id ? null : post.id)}
+                            />
+                            {openPostMenuId === post.id && (
+                              <div className="card commission-post-menu" role="menu">
+                                <button
+                                  type="button"
+                                  className="commission-post-menu-item"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setSelectedPublicRequest(post);
+                                    beginEditingPost(post);
+                                    setOpenPostMenuId(null);
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="commission-post-menu-item c-danger"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setPendingDeletePost(post);
+                                    setPostDeleteError(null);
+                                    setOpenPostMenuId(null);
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!isCurrentOwner && user && post.status === 'OPEN' && (
+                          <OptionsMenu
+                            ariaLabel={`More options for ${post.title}`}
+                            items={[{
+                              label: 'Report commission post',
+                              onClick: () => setReportTarget({
+                                type: 'COMMISSION_POST',
+                                id: post.id,
+                                label: post.title,
+                                demoOnly: !isSupabaseConfigured,
+                              }),
+                            }]}
                           />
-                          {openPostMenuId === post.id && (
-                            <div className="card commission-post-menu" role="menu">
-                              <button
-                                type="button"
-                                className="commission-post-menu-item"
-                                role="menuitem"
-                                onClick={() => {
-                                  setSelectedPublicRequest(post);
-                                  beginEditingPost(post);
-                                  setOpenPostMenuId(null);
-                                }}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className="commission-post-menu-item c-danger"
-                                role="menuitem"
-                                onClick={() => {
-                                  setPendingDeletePost(post);
-                                  setPostDeleteError(null);
-                                  setOpenPostMenuId(null);
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                     <h2 className="commission-post-title">{post.title}</h2>
                     <p className="commission-post-description">{post.description}</p>
@@ -2211,6 +2230,7 @@ export function MarketplacePage() {
           </div>
         </>
       )}
+      <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />
       {toast}
     </ScreenShell>
   );

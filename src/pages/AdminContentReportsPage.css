@@ -1,0 +1,114 @@
+.admin-content-reports {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 24px;
+}
+
+.admin-content-reports-notice {
+  padding: 12px 14px;
+  color: var(--ag-text-mid);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-content-report-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.admin-content-report-filters .field-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.admin-content-report-filters select {
+  width: 100%;
+}
+
+.admin-content-report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-content-report-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.admin-content-report-card .row-between > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-content-report-detail {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.admin-content-report-detail h2,
+.admin-content-report-detail h3 {
+  margin: 0;
+}
+
+.admin-content-report-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.admin-content-report-facts dt {
+  color: var(--ag-text-low);
+  font-size: 11px;
+}
+
+.admin-content-report-facts dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.admin-content-report-message,
+.admin-content-report-history {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ag-border-soft);
+}
+
+.admin-content-report-message p,
+.admin-content-report-history p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.admin-content-report-history article {
+  display: grid;
+  gap: 5px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ag-border-soft);
+}
+
+.admin-content-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.admin-content-report-decision {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-content-report-decision .field-label {
+  margin: 0;
+}
+
+.admin-content-report-error {
+  color: var(--ag-danger);
+}

@@ -339,8 +339,8 @@ objects or migration history.
 `artist-commission-availability.sql` grant authenticated clients column-level
 `UPDATE` access to `profiles.is_pro`. Apply
 `supabase/pro-entitlement-hardening.sql` after both migrations to revoke that
-client write access while preserving ordinary profile edits and existing
-`is_pro` values. Validate it in staging before relying on `is_pro` as a
+table- and column-level client write access while preserving ordinary profile
+edits and existing `is_pro` values. Validate it in staging before relying on `is_pro` as a
 trusted entitlement:
 
 ```sql
@@ -641,26 +641,77 @@ post, or pending application. A successful request preserves profile,
 artwork, chat, commission, and financial records, then asks Supabase Auth to
 sign out all sessions. Access tokens already issued may remain valid until
 expiry; the database guards are the enforcement boundary during that period.
-Reactivation is currently a support/admin operation requiring a verified
-operator; no self-service reactivation or deletion-review dashboard exists.
+Reactivation remains a verified support/admin operation.
 
 Deletion is a private request, not an immediate hard delete. It is rejected
-until the same active-work checks pass, deduplicated while pending/approved,
-and readable only by the requesting account through RLS. While pending or
-approved, protected table writes and ArtGuard Storage access are blocked to
-prevent new work from appearing during review. Authorized support
-must review retention, financial, dispute, artwork, chat, and legal obligations
-before any final action. This repository does not establish a retention period
-or implement final deletion, so do not mark a request complete or claim data
-erasure without that separate authorized process.
+until the same active-work checks pass, deduplicated while open, and readable
+only by the requesting account through RLS. The additive
+`supabase/account-deletion-admin-review.sql` migration requires both
+`account-lifecycle-hardening.sql` and the trusted
+`public.is_current_user_admin()` helper from `profile-access-expand.sql`. It
+adds the `IN_REVIEW` state and a private
+`account_deletion_request_reviews` audit table. Its Admin RPCs verify the
+caller server-side with the existing Admin helper; they expose only the
+requester's name, username, role, relevant business-state counts, and review
+history, not messages or unrelated profile data. Review transitions are
+`PENDING` → `IN_REVIEW` → `APPROVED` or `REJECTED`; decision reasons are
+required and each transition records the Admin and timestamp.
 
-The migration has not been applied to production. Before production use, staging
-must verify the exact live table/RPC/policy definitions, Storage behavior,
-Auth global sign-out, concurrent account writes versus deactivation, old access
-tokens, and every SECURITY DEFINER read RPC that may expose private history.
-No live Supabase account lifecycle behavior has been verified here.
+The Admin review UI records a decision only. An approved request remains
+blocked from new protected writes and awaits a separate authorized retention
+process. No Auth user, profile, artwork, Storage object, commission, payment,
+or chat record is deleted or marked complete by this workflow. The repository
+does not establish a retention period or implement final deletion.
 
-Local validation used a disposable PGlite database with test-only Supabase
+### Reports & Moderation
+
+`supabase/reports-moderation.sql` adds the authenticated report submission and
+Admin review workflow. It requires the existing profile Admin helper, account
+lifecycle write guard, published protected-artwork schema, public commission
+post table, and real commission table. Apply those foundations first, then run
+this migration as a trusted database migration role. Its SECURITY DEFINER
+functions have a fixed search path; the migration revokes default function and
+table access before granting only authenticated RPC execution and reporter
+status-column reads.
+
+The supported report targets are public profiles, published artwork, open
+commission posts, and commissions in which the caller is a participant.
+Reporters choose a category and may include up to 2,000 characters of details.
+Self-reporting is rejected where a target has a single owner. A reporter may
+have only one OPEN/IN_REVIEW report for the same target and is limited to ten
+reports in a rolling 24-hour window. Reporters can read only their own status
+columns; descriptions, target snapshots, and review history are available only
+through Admin-authorized RPCs.
+
+Admin transitions are `OPEN` → `IN_REVIEW` → `RESOLVED` or `DISMISSED`.
+Resolution and dismissal require an explanation. Each transition records the
+reviewing Admin, action, reason, and timestamp. This workflow records decisions
+only: it does not hide content, suspend users, delete data, or alter commission
+or payment state. Demo-mode report dialogs are previews and do not save or send
+reports.
+
+Before any controlled deployment, validate anon, reporter, other authenticated
+user, and Admin behavior in an isolated Supabase-compatible environment.
+Exercise target visibility, duplicate/rate-limit checks, private detail and
+history access, required decision reasons, and conflicting transitions. No
+reports migration has been applied to production or verified against a live
+Supabase project.
+
+Recommended rollout: validate both lifecycle migrations in a disposable
+Supabase staging project, then deploy them before the frontend that uses the
+request status and Admin review RPCs. Verify Artist/Client denials, own-request
+RLS, direct status-write denial, review transitions and audit history, active
+work checks, Storage gating, and the absence of deletion side effects. Keep
+profile Contract rollout separate.
+
+Neither lifecycle migration nor the Admin review migration has been applied
+to production. Before production use, staging must verify the exact live
+table/RPC/policy definitions, Admin helper ownership, Storage behavior, Auth
+global sign-out, concurrent account writes versus state transitions, and
+every SECURITY DEFINER read RPC that may expose private history. No live
+Supabase lifecycle behavior has been verified here.
+
+Prior local validation used a disposable PGlite database with test-only Supabase
 roles, `auth.uid()`, Auth users/profiles, the required commission/payment/chat/
 artwork/notification tables, and `storage.objects`. Twenty-two assertions passed
 across the lifecycle suite and follow-up compatibility checks, including

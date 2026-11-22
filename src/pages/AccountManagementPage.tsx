@@ -197,6 +197,8 @@ export function AccountManagementPage() {
 
   const deletionStatusMessage = deletionRequest?.status === 'PENDING'
     ? 'Awaiting review. Your data remains intact, but protected account changes and uploads are blocked. Nothing has been permanently deleted.'
+    : deletionRequest?.status === 'IN_REVIEW'
+      ? 'An administrator is reviewing your request. Your data remains intact and no permanent deletion has occurred.'
     : deletionRequest?.status === 'APPROVED'
       ? 'Approved and awaiting authorized processing. Your data has not been erased yet.'
       : deletionRequest?.status === 'REJECTED'

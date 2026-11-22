@@ -232,6 +232,20 @@ export function SettingsPage() {
               sublabel="Review pending artist applications"
               onClick={() => navigate('/admin/artist-verifications')}
             />
+            <hr className="soft" style={{ margin: 0 }} />
+            <SettingsRow
+              icon="alert"
+              label="Account Deletion Requests"
+              sublabel="Review private account requests"
+              onClick={() => navigate('/admin/account-deletion-requests')}
+            />
+            <hr className="soft" style={{ margin: 0 }} />
+            <SettingsRow
+              icon="alert"
+              label="Reports & Moderation"
+              sublabel="Review user-submitted reports"
+              onClick={() => navigate('/admin/reports')}
+            />
           </>
         )}
         <hr className="soft" style={{ margin: 0 }} />
@@ -240,6 +254,13 @@ export function SettingsPage() {
           label={user?.isPro ? 'ArtGuard Pro' : 'Premium Subscription'}
           sublabel={user?.isPro ? 'Your Pro plan is active' : 'Unlock advanced shielding & 0% fees'}
           onClick={() => navigate('/profile/premium')}
+        />
+        <hr className="soft" style={{ margin: 0 }} />
+        <SettingsRow
+          icon="alert"
+          label="My Reports"
+          sublabel="Track reports you have submitted"
+          onClick={() => navigate('/profile/settings/reports')}
         />
         <hr className="soft" style={{ margin: 0 }} />
         <SettingsRow

@@ -1,0 +1,158 @@
+.admin-deletion-page {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 24px;
+}
+
+.admin-deletion-notice {
+  color: var(--ag-text-mid);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-deletion-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-deletion-card {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-deletion-status {
+  padding: 5px 9px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: 999px;
+  color: var(--ag-text-mid);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.admin-deletion-status.status-pending,
+.admin-deletion-status.status-in_review {
+  color: var(--ag-warning);
+}
+
+.admin-deletion-status.status-approved {
+  color: var(--ag-success);
+}
+
+.admin-deletion-status.status-rejected,
+.admin-deletion-status.status-cancelled {
+  color: var(--ag-danger);
+}
+
+.admin-deletion-open {
+  justify-self: start;
+}
+
+.admin-deletion-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-deletion-detail h2,
+.admin-deletion-work h3,
+.admin-deletion-history h3 {
+  margin: 0;
+}
+
+.admin-deletion-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.admin-deletion-detail-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-deletion-detail-grid span,
+.admin-deletion-work,
+.admin-deletion-history {
+  color: var(--ag-text-mid);
+  font-size: 12px;
+}
+
+.admin-deletion-detail-grid strong {
+  color: var(--ag-text-hi);
+  overflow-wrap: anywhere;
+  text-transform: capitalize;
+}
+
+.admin-deletion-work,
+.admin-deletion-history {
+  display: grid;
+  gap: 7px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ag-border-soft);
+}
+
+.admin-deletion-work h3,
+.admin-deletion-history h3 {
+  color: var(--ag-text-hi);
+  text-transform: uppercase;
+}
+
+.admin-deletion-history-entry {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: var(--ag-r-sm);
+  background: var(--ag-surface-2);
+}
+
+.admin-deletion-history-entry strong {
+  color: var(--ag-text-hi);
+  text-transform: capitalize;
+}
+
+.admin-deletion-history-entry p {
+  margin: 3px 0 0;
+  color: var(--ag-text-mid);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.admin-deletion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-deletion-actions .btn {
+  width: auto;
+}
+
+.admin-deletion-decision {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ag-border-soft);
+}
+
+.admin-deletion-error {
+  color: var(--ag-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-deletion-empty {
+  padding: 28px 18px;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .admin-deletion-actions {
+    flex-direction: column;
+  }
+
+  .admin-deletion-actions .btn {
+    width: 100%;
+  }
+}

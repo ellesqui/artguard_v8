@@ -49,6 +49,98 @@ export interface PendingArtistVerification {
   }>;
 }
 
+export type AccountDeletionRequestStatus =
+  | 'PENDING'
+  | 'IN_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
+export type AccountDeletionReviewAction = 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
+
+export interface AccountDeletionRequestSummary {
+  request_id: string;
+  requester_name: string;
+  requester_username: string | null;
+  requester_role: UserRole | null;
+  status: AccountDeletionRequestStatus;
+  requested_at: string;
+}
+
+export interface AccountDeletionRequestReviewDetail {
+  request_id: string;
+  status: AccountDeletionRequestStatus;
+  requested_at: string;
+  reviewed_at: string | null;
+  requester: {
+    name: string;
+    username: string | null;
+    role: UserRole | null;
+  };
+  account_state: {
+    lifecycle_status: string;
+    active_commissions: number;
+    pending_payments: number;
+    open_commission_posts: number;
+    pending_applications: number;
+  };
+  review_history: Array<{
+    action: AccountDeletionReviewAction;
+    reviewer_name: string;
+    reviewed_at: string;
+    reason: string | null;
+  }>;
+}
+
+export type ContentReportTargetType = 'PROFILE' | 'ARTWORK' | 'COMMISSION_POST' | 'COMMISSION';
+export type ContentReportCategory = 'SPAM' | 'HARASSMENT' | 'SCAM' | 'INAPPROPRIATE' | 'COPYRIGHT' | 'OTHER';
+export type ContentReportStatus = 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'DISMISSED';
+export type ContentReportReviewAction = 'IN_REVIEW' | 'RESOLVED' | 'DISMISSED';
+
+export interface MyContentReportStatus {
+  id: string;
+  target_type: ContentReportTargetType;
+  category: ContentReportCategory;
+  status: ContentReportStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminContentReportSummary {
+  report_id: string;
+  target_type: ContentReportTargetType;
+  target_id: string;
+  target_label: string;
+  category: ContentReportCategory;
+  status: ContentReportStatus;
+  created_at: string;
+  reporter_name: string;
+  reporter_username: string | null;
+}
+
+export interface AdminContentReportDetail {
+  report_id: string;
+  target_type: ContentReportTargetType;
+  target_id: string;
+  target_label: string;
+  category: ContentReportCategory;
+  status: ContentReportStatus;
+  created_at: string;
+  updated_at: string;
+  details: string | null;
+  reporter: {
+    name: string;
+    username: string | null;
+  };
+  review_history: Array<{
+    action: ContentReportReviewAction;
+    reviewer_name: string;
+    reason: string | null;
+    reviewed_at: string;
+  }>;
+}
+
 export function usernameFromEmail(email?: string | null): string {
   const local = (email ?? '').split('@')[0]?.trim().toLowerCase() ?? '';
   const cleaned = local.replace(/[^a-z0-9._-]+/g, '').replace(/^[@._-]+|[@._-]+$/g, '');
@@ -252,6 +344,103 @@ export async function rejectArtistVerification(artistId: string, rejectionReason
   const { error } = await supabase.rpc('reject_artist_verification', {
     p_artist_id: artistId,
     p_rejection_reason: rejectionReason,
+  });
+  if (error) throw error;
+}
+
+export async function listAccountDeletionRequestsForAdmin(): Promise<AccountDeletionRequestSummary[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('list_account_deletion_requests_for_admin');
+  if (error) throw error;
+  return (data ?? []) as AccountDeletionRequestSummary[];
+}
+
+export async function getAccountDeletionRequestReview(
+  requestId: string,
+): Promise<AccountDeletionRequestReviewDetail> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('get_account_deletion_request_review', {
+    p_request_id: requestId,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('Account deletion request was not found.');
+  return data as AccountDeletionRequestReviewDetail;
+}
+
+export async function reviewAccountDeletionRequest(
+  requestId: string,
+  action: AccountDeletionReviewAction,
+  reason?: string,
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('review_account_deletion_request', {
+    p_request_id: requestId,
+    p_action: action,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+}
+
+export async function submitContentReport(
+  targetType: ContentReportTargetType,
+  targetId: string,
+  category: ContentReportCategory,
+  details?: string,
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('submit_content_report', {
+    p_target_type: targetType,
+    p_target_id: targetId,
+    p_category: category,
+    p_details: details ?? null,
+  });
+  if (error) throw error;
+}
+
+export async function listMyContentReportStatuses(): Promise<MyContentReportStatus[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase
+    .from('content_reports')
+    .select('id,target_type,category,status,created_at,updated_at')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []) as MyContentReportStatus[];
+}
+
+export async function listContentReportsForAdmin(
+  status?: ContentReportStatus | null,
+  targetType?: ContentReportTargetType | null,
+): Promise<AdminContentReportSummary[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('list_content_reports_for_admin', {
+    p_status: status ?? null,
+    p_target_type: targetType ?? null,
+  });
+  if (error) throw error;
+  return (data ?? []) as AdminContentReportSummary[];
+}
+
+export async function getContentReportDetail(reportId: string): Promise<AdminContentReportDetail> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('get_content_report_detail', {
+    p_report_id: reportId,
+  });
+  if (error) throw error;
+  if (!data) throw new Error('Report was not found.');
+  return data as AdminContentReportDetail;
+}
+
+export async function reviewContentReport(
+  reportId: string,
+  action: ContentReportReviewAction,
+  reason?: string,
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.rpc('review_content_report', {
+    p_report_id: reportId,
+    p_action: action,
+    p_reason: reason ?? null,
   });
   if (error) throw error;
 }
