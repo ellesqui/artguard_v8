@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useIonRouter } from '@ionic/react';
 import { AuthShell } from '../components/auth/AuthShell';
@@ -28,14 +28,22 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | undefined>();
-  const [googleEmailSent, setGoogleEmailSent] = useState(false);
+  const [googleRetrySeconds, setGoogleRetrySeconds] = useState(0);
   const googleLoginInFlight = useRef(false);
 
+  useEffect(() => {
+    if (googleRetrySeconds <= 0) return undefined;
+    const timer = window.setTimeout(
+      () => setGoogleRetrySeconds((remaining) => Math.max(0, remaining - 1)),
+      1000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [googleRetrySeconds]);
+
   const handleGoogleCredential = async (credential: string) => {
-    if (googleLoginInFlight.current) return;
+    if (googleLoginInFlight.current || googleRetrySeconds > 0) return;
     googleLoginInFlight.current = true;
     setFormError(undefined);
-    setGoogleEmailSent(false);
     setGoogleSubmitting(true);
     logAuthInteractionDiagnostic('login.started', { destination: '/home', method: 'google' });
     let result: Awaited<ReturnType<typeof completeExistingGoogleLogin>>;
@@ -51,13 +59,16 @@ export function LoginPage() {
     if (!result.success) {
       logAuthInteractionDiagnostic('login.failed', { success: false, method: 'google' });
       setFormError(result.error ?? 'Unable to start Google sign-in. Please try again.');
+      setGoogleRetrySeconds(result.retryAfterSeconds ?? 0);
       setGoogleSubmitting(false);
       googleLoginInFlight.current = false;
       return;
     }
+    logAuthInteractionDiagnostic('login.completed', { success: true, method: 'google' });
+    recordAuthDiagnosticNavigation('/home', 'ionic-useIonRouter-root-replace');
     googleLoginInFlight.current = false;
     setGoogleSubmitting(false);
-    setGoogleEmailSent(true);
+    ionRouter.push('/home', 'root', 'replace');
   };
 
   const validate = (): boolean => {
@@ -110,12 +121,6 @@ export function LoginPage() {
           <span>{formError}</span>
         </div>
       )}
-      {googleEmailSent && (
-        <div className="auth-banner success" role="status" style={{ marginBottom: 16 }}>
-          <span>Check your email to finish signing in. The secure sign-in link will take you back to ArtGuard Hub.</span>
-        </div>
-      )}
-
       <form onSubmit={handleSubmit} noValidate>
         <AuthInput
           label="Email address"
@@ -168,13 +173,17 @@ export function LoginPage() {
       </div>
 
       <GoogleIdentityLoginButton
-        disabled={googleSubmitting}
+        disabled={googleSubmitting || googleRetrySeconds > 0}
         onCredential={(credential) => void handleGoogleCredential(credential)}
         onError={(message) => {
-          setGoogleEmailSent(false);
           setFormError(message);
         }}
       />
+      {googleRetrySeconds > 0 && (
+        <p className="t-xs c-low" role="status" style={{ textAlign: 'center', marginBottom: 12 }}>
+          Try Google sign-in again in {googleRetrySeconds} seconds.
+        </p>
+      )}
 
       <p className="t-xs c-low auth-footnote">
         New to ArtGuard Hub?{' '}

@@ -1,13 +1,13 @@
 import { useEffect } from 'react';
 import type { ReactElement } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { IonPage, IonContent, IonSpinner } from '@ionic/react';
+import { IonPage, IonContent, IonSpinner, IonButton } from '@ionic/react';
 import { useAuth } from '../context/AuthContext';
 import { logAuthInteractionDiagnostic } from '../utils/authInteractionDiagnostics';
 
 /** Redirects to /login if there is no mock session; renders children once there is. */
 export function RequireAuth({ children }: { children: ReactElement }) {
-  const { isAuthenticated, initializing } = useAuth();
+  const { isAuthenticated, initializing, sessionRecoveryError, retrySessionRecovery } = useAuth();
   const location = useLocation();
 
   useEffect(() => {
@@ -33,6 +33,20 @@ export function RequireAuth({ children }: { children: ReactElement }) {
         <IonContent fullscreen>
           <div style={{ minHeight: '100%', display: 'grid', placeItems: 'center' }}>
             <IonSpinner name="crescent" />
+          </div>
+        </IonContent>
+      </IonPage>
+    );
+  }
+  if (sessionRecoveryError) {
+    return (
+      <IonPage>
+        <IonContent fullscreen>
+          <div style={{ minHeight: '100%', display: 'grid', placeItems: 'center', padding: 24 }}>
+            <div role="alert" style={{ maxWidth: 420, textAlign: 'center' }}>
+              <p>{sessionRecoveryError}</p>
+              <IonButton onClick={() => void retrySessionRecovery()}>Retry account check</IonButton>
+            </div>
           </div>
         </IonContent>
       </IonPage>

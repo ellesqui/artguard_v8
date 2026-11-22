@@ -599,12 +599,39 @@ during this review, and `.env.local` values were not read. Verify Vercel's
 production/preview variable associations and Supabase project URL in the
 provider dashboard before release.
 
-`supabase/config.toml` sets `verify_jwt = false` for
-`google-login-existing`; that function performs its own Google-token
-validation. Confirm the deployed Edge Function source revision and required
-environment-variable names/configuration in the Supabase dashboard. The local
-config does not prove which revision or values are deployed. Do not put
-service-role keys in frontend `VITE_*` variables.
+The `google-login-existing` Edge Function is retained for legacy frontend
+clients. The repository's current handler returns `{ "accepted": "true" }`
+after verification and returns `{ "code": "account_not_found" }` for an
+ineligible account. The deployed legacy revision and its exact response
+contract have not been independently inspected; do not redeploy this endpoint
+during the transition.
+
+The new `google-login-existing-v2` endpoint shares the RS256/JWKS token
+verification and existing-account checks with the legacy handler. Its
+configuration intentionally sets `verify_jwt = false` because the handler
+performs Google ID-token verification itself. On success it returns
+`{ "accepted": "true" }`; the frontend then exchanges the same Google ID token
+with Supabase Auth using `signInWithIdToken`, which creates a persistent
+Supabase session. This flow does not send an email OTP.
+
+Use this staged deployment sequence:
+
+1. Deploy only `google-login-existing-v2`:
+   `npx supabase functions deploy google-login-existing-v2 --project-ref tyqyyxhvvszpyvyaagwx --no-verify-jwt`
+2. Confirm its deployed version and `verify_jwt` setting in the Supabase
+   dashboard. Confirm its required server-side Supabase settings,
+   `GOOGLE_CLIENT_ID`, and allowed frontend origins without exposing secret
+   values.
+3. Deploy the updated frontend, which invokes only `google-login-existing-v2`.
+4. Perform one controlled Google login and protected-route browser refresh.
+5. Keep `google-login-existing` deployed for rollback compatibility until the
+   new frontend is confirmed stable. Do not remove it during this rollout.
+
+The Google OAuth Web client ID used by `VITE_GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_ID`, and the Supabase Auth Google provider must match. Keep the
+Google client secret and Supabase service-role key server-side; never put them
+in frontend `VITE_*` variables. The local source and configuration do not
+prove which revisions or provider settings are deployed.
 
 ## Account deactivation and deletion requests
 

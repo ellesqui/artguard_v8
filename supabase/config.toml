@@ -1,2 +1,5 @@
 [functions.google-login-existing]
 verify_jwt = false
+
+[functions.google-login-existing-v2]
+verify_jwt = false

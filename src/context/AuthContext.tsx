@@ -135,6 +135,17 @@ function logAuthRequestFailure(operation: AuthOperation, error: unknown) {
   });
 }
 
+function getRetryAfterSeconds(response: Response): number | undefined {
+  const retryAfter = response.headers.get('Retry-After');
+  if (!retryAfter) return undefined;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+  const retryAt = Date.parse(retryAfter);
+  if (!Number.isFinite(retryAt)) return undefined;
+  const remaining = Math.ceil((retryAt - Date.now()) / 1000);
+  return remaining > 0 ? remaining : undefined;
+}
+
 function getAuthErrorMessage(error: unknown, operation: AuthOperation): string {
   const { code, name, status } = getAuthErrorMetadata(error);
 
@@ -327,6 +338,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   isAuthenticated: boolean;
   initializing: boolean;
+  sessionRecoveryError: string | null;
+  retrySessionRecovery: () => Promise<void>;
   backendMode: 'supabase' | 'mock';
   login: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string, role: UserRole) => Promise<AuthResult>;
@@ -389,7 +402,10 @@ function authUserFromMetadata(authUser: SupabaseAuthUser): AuthUser {
   };
 }
 
-async function publicUserFromSession(authUser: SupabaseAuthUser): Promise<AuthUser> {
+async function publicUserFromSession(
+  authUser: SupabaseAuthUser,
+  onProfileUnavailable?: () => void,
+): Promise<AuthUser> {
   if (supabase) {
     const { data: isActive, error } = await supabase.rpc('is_my_account_active');
     if (error) throw error;
@@ -401,7 +417,7 @@ async function publicUserFromSession(authUser: SupabaseAuthUser): Promise<AuthUs
   try {
     profile = await getMyProfile(authUser.id);
   } catch (error) {
-    // Do not blank the app if the profile row is briefly unavailable right after signup.
+    onProfileUnavailable?.();
     console.warn('ArtGuard: profile lookup failed; using auth metadata for now.', error);
   }
 
@@ -462,8 +478,11 @@ async function refreshProfileForUser(userId: string, fallback: AuthUser): Promis
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [sessionRecoveryError, setSessionRecoveryError] = useState<string | null>(null);
   const [passwordRecoverySession, setPasswordRecoverySession] = useState(false);
   const authStateRevision = useRef(0);
+  const googleLoginInFlight = useRef<Promise<AuthResult> | null>(null);
+  const googleLoginRetryAt = useRef(0);
 
   useEffect(() => {
     updateAuthInteractionDiagnosticState({
@@ -517,6 +536,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!session?.user) {
         if (event === 'SIGNED_OUT') {
           setPasswordRecoverySession(false);
+          setSessionRecoveryError(null);
         }
         setUser(null);
         if (event === 'INITIAL_SESSION') {
@@ -538,9 +558,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPasswordRecoverySession(false);
       }
       window.setTimeout(() => {
-        void publicUserFromSession(session.user).then((next) => {
+        let profileUnavailable = false;
+        void publicUserFromSession(session.user, () => { profileUnavailable = true; }).then((next) => {
           if (!active || revision !== authStateRevision.current) return;
           setUser(next);
+          setSessionRecoveryError(profileUnavailable
+            ? 'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.'
+            : null);
           if (event === 'INITIAL_SESSION') {
             setInitializing(false);
             logAuthInteractionDiagnostic('auth.initialization.completed', {
@@ -551,17 +575,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               supabaseConfigured: true,
             });
           }
-          void refreshProfileForUser(session.user.id, next).then((refreshed) => {
-            if (active && revision === authStateRevision.current) setUser(refreshed);
-          });
+          if (!profileUnavailable) {
+            void refreshProfileForUser(session.user.id, next).then((refreshed) => {
+              if (active && revision === authStateRevision.current) setUser(refreshed);
+            });
+          }
         }).catch((error) => {
           if (active && revision === authStateRevision.current) {
             if (error instanceof DeactivatedAccountError) {
               setUser(null);
               setPasswordRecoverySession(false);
+              setSessionRecoveryError(null);
               void revokeInactiveSession().catch((signOutError) => {
                 console.error('ArtGuard: failed to sign out a deactivated account.', signOutError);
               });
+            } else {
+              setUser(authUserFromMetadata(session.user));
+              setSessionRecoveryError(
+                'Your session is still active, but account details could not be verified. Retry to restore your account.',
+              );
             }
             if (event === 'INITIAL_SESSION') {
               setInitializing(false);
@@ -594,11 +626,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const persistSession = useCallback((nextUser: AuthUser | null) => {
     setUser(nextUser);
+    if (!nextUser) setSessionRecoveryError(null);
     if (!isSupabaseConfigured) {
       if (nextUser) localStorage.setItem(SESSION_KEY, JSON.stringify(nextUser));
       else localStorage.removeItem(SESSION_KEY);
     }
   }, []);
+
+  const retrySessionRecovery = useCallback(async () => {
+    if (!supabase) return;
+    setInitializing(true);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      if (!data.session?.user) {
+        setUser(null);
+        setSessionRecoveryError(null);
+        return;
+      }
+
+      let profileUnavailable = false;
+      const hydratedUser = await publicUserFromSession(data.session.user, () => { profileUnavailable = true; });
+      setUser(hydratedUser);
+      setSessionRecoveryError(profileUnavailable
+        ? 'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.'
+        : null);
+      if (!profileUnavailable) {
+        void refreshProfileForUser(data.session.user.id, hydratedUser).then(persistSession);
+      }
+    } catch (error) {
+      if (error instanceof DeactivatedAccountError) {
+        setUser(null);
+        setSessionRecoveryError(null);
+        void revokeInactiveSession().catch((signOutError) => {
+          console.error('ArtGuard: failed to sign out a deactivated account.', signOutError);
+        });
+      } else {
+        setSessionRecoveryError(
+          'Your session is still active, but account details could not be verified. Check your connection and retry.',
+        );
+      }
+    } finally {
+      setInitializing(false);
+    }
+  }, [persistSession]);
 
   const login = useCallback(async (email: string, password: string) => {
     if (!isSupabaseConfigured || !supabase) {
@@ -617,7 +688,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: getAuthErrorMessage(error, 'login') };
       }
       if (!data.user) return { success: false, error: 'Unable to sign in right now. Please try again.' };
-      const fallbackUser = await publicUserFromSession(data.user);
+      const fallbackUser = await publicUserFromSession(data.user, () => setSessionRecoveryError(
+        'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.',
+      ));
       try {
         await ensureMyProfile({
           id: data.user.id,
@@ -674,7 +747,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error: "Check your email for confirmation instructions. If you don't receive one, try signing in or resetting your password.",
         };
       }
-      let fallbackUser = await publicUserFromSession(data.user);
+      let fallbackUser = await publicUserFromSession(data.user, () => setSessionRecoveryError(
+        'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.',
+      ));
       try {
         const profile = await ensureMyProfile({
           id: data.user.id,
@@ -766,33 +841,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const completeExistingGoogleLogin = useCallback(async (credential: string): Promise<AuthResult> => {
-    if (!isSupabaseConfigured || !supabase) {
-      return { success: false, error: 'Google sign-in requires a configured Supabase connection.' };
-    }
-    if (!credential.trim()) {
-      return { success: false, error: 'Google could not verify your account. Please try again.' };
+  const completeExistingGoogleLogin = useCallback((credential: string): Promise<AuthResult> => {
+    if (googleLoginInFlight.current) return googleLoginInFlight.current;
+    const secondsUntilRetry = Math.ceil((googleLoginRetryAt.current - Date.now()) / 1000);
+    if (secondsUntilRetry > 0) {
+      return Promise.resolve({
+        success: false,
+        error: `Google sign-in is temporarily rate-limited. Please wait ${secondsUntilRetry} seconds and try again.`,
+        retryAfterSeconds: secondsUntilRetry,
+      });
     }
 
-    try {
-      if (!supabaseUrl) {
+    const attempt = (async (): Promise<AuthResult> => {
+      if (!isSupabaseConfigured || !supabase) {
         return { success: false, error: 'Google sign-in requires a configured Supabase connection.' };
       }
-      const functionUrl = new URL('/functions/v1/google-login-existing', supabaseUrl);
-      const isLocalFunction = functionUrl.hostname === 'localhost' || functionUrl.hostname === '127.0.0.1';
-      if (functionUrl.protocol !== 'https:' && !isLocalFunction) {
-        return { success: false, error: 'Google sign-in is unavailable over an insecure connection.' };
+      if (!credential.trim()) {
+        return { success: false, error: 'Google could not verify your account. Please try again.' };
       }
 
-      const { data, error } = await supabase.functions.invoke('google-login-existing', {
-        body: { credential },
-      });
-      if (error) {
-        if (error.context instanceof Response) {
-          try {
-            const failure: unknown = await error.context.json();
+      try {
+        if (!supabaseUrl) {
+          return { success: false, error: 'Google sign-in requires a configured Supabase connection.' };
+        }
+        const functionUrl = new URL('/functions/v1/google-login-existing-v2', supabaseUrl);
+        const isLocalFunction = functionUrl.hostname === 'localhost' || functionUrl.hostname === '127.0.0.1';
+        if (functionUrl.protocol !== 'https:' && !isLocalFunction) {
+          return { success: false, error: 'Google sign-in is unavailable over an insecure connection.' };
+        }
+
+        const { data, error } = await supabase.functions.invoke('google-login-existing-v2', {
+          body: { credential },
+        });
+        if (error) {
+          if (error.context instanceof Response) {
+            const response = error.context;
+            let failure: unknown;
+            try {
+              failure = await response.clone().json();
+            } catch {
+              failure = undefined;
+            }
             if (
-              error.context.status === 404
+              response.status === 404
               && typeof failure === 'object'
               && failure !== null
               && 'code' in failure
@@ -800,27 +891,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ) {
               return { success: false, error: 'No ArtGuard Hub account was found. Please sign up first.' };
             }
-          } catch {
-            return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
+            if (response.status === 429) {
+              const retryAfterSeconds = getRetryAfterSeconds(response) ?? 5;
+              return {
+                success: false,
+                error: `Google sign-in is temporarily rate-limited. Please wait ${retryAfterSeconds} seconds and try again.`,
+                retryAfterSeconds,
+              };
+            }
           }
+          logAuthRequestFailure('oauth', error);
+          return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
         }
-        return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
-      }
-      if (
-        typeof data !== 'object'
-        || data === null
-        || !('accepted' in data)
-        || data.accepted !== 'true'
-      ) {
-        return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
-      }
+        if (
+          typeof data !== 'object'
+          || data === null
+          || !('accepted' in data)
+          || data.accepted !== 'true'
+        ) {
+          return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
+        }
 
-      return { success: true };
-    } catch (error) {
-      logAuthRequestFailure('oauth', error);
-      return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
-    }
-  }, []);
+        const { data: authData, error: authError } = await supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: credential,
+        });
+        if (authError) {
+          logAuthRequestFailure('oauth', authError);
+          if (authError.status === 429) {
+            return {
+              success: false,
+              error: 'Google sign-in is temporarily rate-limited. Please wait 5 seconds and try again.',
+              retryAfterSeconds: 5,
+            };
+          }
+          return { success: false, error: 'Google verified your account, but ArtGuard could not start a session. Please try again.' };
+        }
+        if (!authData.session || !authData.user) {
+          return { success: false, error: 'Google verified your account, but ArtGuard did not receive a session. Please try again.' };
+        }
+
+        try {
+          let profileUnavailable = false;
+          const authenticatedUser = await publicUserFromSession(authData.user, () => { profileUnavailable = true; });
+          setSessionRecoveryError(profileUnavailable
+            ? 'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.'
+            : null);
+          persistSession(authenticatedUser);
+        } catch (sessionError) {
+          if (sessionError instanceof DeactivatedAccountError) {
+            await revokeInactiveSession();
+            return { success: false, error: sessionError.message };
+          }
+          console.warn('ArtGuard: Google session established, but account hydration failed.');
+          persistSession(authUserFromMetadata(authData.user));
+          setSessionRecoveryError(
+            'Your session is active, but account details could not be verified. Retry to restore your account.',
+          );
+        }
+        return { success: true };
+      } catch (error) {
+        logAuthRequestFailure('oauth', error);
+        return { success: false, error: 'Unable to sign in with Google right now. Please try again.' };
+      }
+    })();
+
+    googleLoginInFlight.current = attempt;
+    return attempt.then((result) => {
+      if (result.retryAfterSeconds) {
+        googleLoginRetryAt.current = Date.now() + result.retryAfterSeconds * 1000;
+      }
+      return result;
+    }).finally(() => {
+      if (googleLoginInFlight.current === attempt) googleLoginInFlight.current = null;
+    });
+  }, [persistSession]);
 
   const completeExistingGoogleEmailLogin = useCallback(async (): Promise<
     AuthResult & { destination?: AuthenticatedDestination }
@@ -849,14 +994,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const { data: userData, error: userError } = await authClient.auth.getUser();
-      if (userError || !userData.user || userData.user.id !== sessionData.session.user.id) {
-        if (userError) logAuthRequestFailure('oauth', userError);
+      if (userError) {
+        logAuthRequestFailure('oauth', userError);
+        persistSession(authUserFromMetadata(sessionData.session.user));
+        setSessionRecoveryError(
+          'Your session is active, but account details could not be verified. Retry to restore your account.',
+        );
+        setInitializing(false);
+        return {
+          success: false,
+          error: 'Your sign-in is active, but ArtGuard could not verify your account details. Please retry.',
+        };
+      }
+      if (!userData.user || userData.user.id !== sessionData.session.user.id) {
         return rejectUnverifiedSession('Unable to verify this email sign-in. Please try Google Login again.');
       }
 
-      const profile = await getMyProfile(userData.user.id);
+      let profile: Awaited<ReturnType<typeof getMyProfile>>;
+      try {
+        profile = await getMyProfile(userData.user.id);
+      } catch (error) {
+        logAuthRequestFailure('oauth', error);
+        persistSession(authUserFromMetadata(userData.user));
+        setSessionRecoveryError(
+          'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.',
+        );
+        setInitializing(false);
+        return {
+          success: false,
+          error: 'Your sign-in is active, but your ArtGuard profile could not be loaded. Please retry.',
+        };
+      }
       if (!profile || (profile.role !== 'artist' && profile.role !== 'client')) {
-        return rejectUnverifiedSession('No ArtGuard Hub account was found. Please sign up first.');
+        persistSession(authUserFromMetadata(userData.user));
+        setSessionRecoveryError(
+          'Your session is active, but your ArtGuard profile is unavailable. Retry or contact support.',
+        );
+        setInitializing(false);
+        return {
+          success: false,
+          error: 'Your sign-in is active, but your ArtGuard profile is unavailable. Please retry.',
+        };
       }
 
       const authenticatedUser: AuthUser = {
@@ -879,12 +1057,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAdmin: Boolean(profile.is_admin),
       };
       persistSession(authenticatedUser);
+      setSessionRecoveryError(null);
       setInitializing(false);
       return { success: true, destination: '/home' };
     } catch (error) {
       logAuthRequestFailure('oauth', error);
-      await rejectUnverifiedSession('Unable to complete sign-in. Please try Google Login again.');
-      return { success: false, error: 'Unable to complete sign-in. Please try Google Login again.' };
+      try {
+        const { data, error: sessionError } = await authClient.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (data.session?.user) {
+          persistSession(authUserFromMetadata(data.session.user));
+          setSessionRecoveryError(
+            'Your session is active, but account details could not be loaded. Retry to restore your account.',
+          );
+          setInitializing(false);
+          return {
+            success: false,
+            error: 'Your sign-in is active, but account details could not be loaded. Please retry.',
+          };
+        }
+      } catch (sessionError) {
+        logAuthRequestFailure('oauth', sessionError);
+        setSessionRecoveryError(
+          'Sign-in could not be completed. Check your connection and return to Login to try again.',
+        );
+        setInitializing(false);
+        return {
+          success: false,
+          error: 'Sign-in could not be completed. Check your connection and try again.',
+        };
+      }
+      return rejectUnverifiedSession('Unable to complete sign-in. Please try Google Login again.');
     }
   }, [persistSession]);
 
@@ -1238,6 +1441,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isAuthenticated: !!user,
       initializing,
+      sessionRecoveryError,
+      retrySessionRecovery,
       backendMode: isSupabaseConfigured ? 'supabase' : 'mock',
       login,
       signUp,
@@ -1255,7 +1460,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       enableMockPremium,
       logout,
     }),
-    [user, initializing, login, signUp, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
+    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

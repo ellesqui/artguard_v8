@@ -37,4 +37,5 @@ export interface MockAccount extends AuthUser {
 export interface AuthResult {
   success: boolean;
   error?: string;
+  retryAfterSeconds?: number;
 }
