@@ -21,3 +21,9 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
       },
     })
   : null;
+
+export const supabaseConfigurationStatus = Object.freeze({
+  urlPresent: Boolean(supabaseUrl),
+  publishableKeyPresent: Boolean(supabasePublishableKey),
+  clientInitialized: supabase !== null,
+});

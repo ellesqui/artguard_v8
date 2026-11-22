@@ -22,6 +22,7 @@ import { approveCommissionDeliverable, createCommissionDeliverableSignedUrl, lis
 import { approveCommissionMilestone, createDefaultCommissionMilestones, listCommissionMilestones, startCommissionMilestone, submitCommissionMilestone, type CommissionMilestone } from '../lib/supabaseMilestones';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
 import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
+import { supabaseConfigurationStatus } from '../lib/supabase';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -58,7 +59,10 @@ function formatDemoAmount(amount: number, currency: string): string {
   return currency === 'PHP' ? `₱${formatted}` : `${currency} ${formatted}`;
 }
 
-function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; code?: string } {
+function getDemoPaymentFailureDiagnostics(
+  error: unknown,
+  operation: string,
+): { category: string; code?: string } {
   const record = typeof error === 'object' && error !== null
     ? error as { code?: unknown; message?: unknown }
     : null;
@@ -70,7 +74,8 @@ function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; c
     : error instanceof Error ? error.message : '';
   const normalizedMessage = message.toUpperCase();
   let category = 'backend-or-response-rejection';
-  if (normalizedMessage.includes('DEMO_PAYMENTS_DISABLED')) category = 'demo-payments-disabled';
+  if (normalizedMessage.includes('SUPABASE IS NOT CONFIGURED')) category = 'supabase-client-not-configured';
+  else if (normalizedMessage.includes('DEMO_PAYMENTS_DISABLED')) category = 'demo-payments-disabled';
   else if (normalizedMessage.includes('COMMISSION_PRICE_UNAVAILABLE')) category = 'commission-price-unavailable';
   else if (
     normalizedMessage.includes('NOT AUTHENTICATED')
@@ -84,8 +89,15 @@ function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; c
   else if (normalizedMessage.includes('PROVIDER')) category = 'provider-payment-rejected';
   else if (normalizedMessage.includes('PAYMENT DOES NOT MATCH')) category = 'payment-record-mismatch';
   else if (normalizedMessage.includes('PENDING')) category = 'payment-state-conflict';
+  else if (normalizedMessage.includes('PAYMENT INFORMATION WAS NOT RETURNED')) category = 'returned-payment-validation-failed';
   else if (code === '42501') category = 'permission-denied';
-  else if (code?.startsWith('PGRST')) category = 'rpc-or-response-error';
+  else if (
+    code?.startsWith('PGRST')
+    || /failed to fetch|network error|timed? out/i.test(message)
+  ) category = 'supabase-rpc-request-failed';
+  else if (operation === 'payment-creation') category = 'payment-creation-rejected';
+  else if (operation === 'demo-payment-rpc') category = 'demo-payment-rejected';
+  else if (operation.includes('validation')) category = 'returned-payment-validation-failed';
 
   return { category, ...(code ? { code } : {}) };
 }
@@ -99,11 +111,22 @@ function sanitizeDemoPaymentErrorMessage(message: string): string {
     .replace(/\b(password|token|key|secret|authorization|amount|payment[_ -]?amount|access[_ -]?token|refresh[_ -]?token|api[_ -]?key|publishable[_ -]?key|provider[_ -]?reference|transaction[_ -]?reference|payment[_ -]?reference)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
     .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '[redacted-id]')
     .replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g, '[redacted-email]')
-    .replace(/(?:[$€£₱]|PHP\s*)\s*\d+(?:\.\d{1,2})?/gi, '[redacted-amount]');
+    .replace(/(?:[$€£₱]|PHP\s*)\s*\d+(?:\.\d{1,2})?/gi, '[redacted-amount]')
+    .replace(/\b\d+(?:\.\d+)?\b/g, '[redacted-number]');
 }
 
 function getDemoPaymentErrorCopy(category: string): string {
   switch (category) {
+    case 'supabase-client-not-configured':
+      return 'Supabase is not configured in this build. No payment was recorded.';
+    case 'supabase-rpc-request-failed':
+      return 'Supabase could not complete the payment request. No success was recorded; please try again.';
+    case 'payment-creation-rejected':
+      return 'A pending payment could not be created for this commission. Refresh the payment status and try again.';
+    case 'demo-payment-rejected':
+      return 'The simulated payment was rejected. No success receipt was created.';
+    case 'returned-payment-validation-failed':
+      return 'The returned payment record failed verification. No success receipt was created; refresh and try again.';
     case 'demo-payments-disabled':
       return 'Simulated payments are currently disabled. No payment was recorded.';
     case 'commission-price-unavailable':
@@ -121,8 +144,6 @@ function getDemoPaymentErrorCopy(category: string): string {
       return 'The payment details no longer match this commission. Refresh before trying again.';
     case 'payment-state-conflict':
       return 'The payment has changed and cannot be confirmed. Refresh the payment status.';
-    case 'rpc-or-response-error':
-      return 'The payment service is unavailable in this app environment. Please try again later.';
     default:
       return 'Payment was not confirmed. No success receipt was created. Refresh the payment status and try again.';
   }
@@ -695,7 +716,7 @@ export function CommissionWorkspacePage() {
     ) return;
 
     const requestedCommissionId = realCommission.id;
-    let failureStage = 'load-or-create-payment';
+    let failureStage = 'pending-payment-validation';
     paymentActionInFlight.current = true;
     setPaymentActionLoading(true);
     setDemoPaymentDialogStep('processing');
@@ -703,11 +724,12 @@ export function CommissionWorkspacePage() {
     try {
       let payment = commissionPayment;
       if (!payment || payment.status === 'FAILED') {
+        failureStage = 'payment-creation';
         payment = await createCommissionPayment(realCommission.id);
         if (activeOrderId.current !== requestedCommissionId) return;
       }
 
-      failureStage = 'validate-pending-payment';
+      failureStage = 'pending-payment-validation';
       if (
         payment.commission_id !== requestedCommissionId
         || payment.payer_id !== user.id
@@ -734,10 +756,10 @@ export function CommissionWorkspacePage() {
         throw new Error('Provider payment records cannot use demo simulation.');
       }
 
-      failureStage = 'demo-success-rpc';
+      failureStage = 'demo-payment-rpc';
       const simulatedPayment = await simulateCommissionPaymentDemoSuccess(payment.id);
       if (activeOrderId.current !== requestedCommissionId) return;
-      failureStage = 'validate-persisted-demo-payment';
+      failureStage = 'returned-payment-validation';
       if (
         simulatedPayment.id !== payment.id
         || simulatedPayment.commission_id !== realCommission.id
@@ -758,7 +780,7 @@ export function CommissionWorkspacePage() {
       showToast('Demo payment successful. No real money was charged or transferred.');
     } catch (error) {
       if (activeOrderId.current !== requestedCommissionId) return;
-      const diagnostics = getDemoPaymentFailureDiagnostics(error);
+      const diagnostics = getDemoPaymentFailureDiagnostics(error, failureStage);
       if (import.meta.env.DEV) {
         const errorRecord = typeof error === 'object' && error !== null
           ? error as { message?: unknown }
@@ -767,9 +789,10 @@ export function CommissionWorkspacePage() {
           ? errorRecord.message
           : error instanceof Error ? error.message : '';
         console.error('ArtGuard: demo payment failed', {
-          stage: failureStage,
+          operation: failureStage,
           ...diagnostics,
           message: sanitizeDemoPaymentErrorMessage(originalMessage),
+          supabase: supabaseConfigurationStatus,
         });
       }
       setDemoPaymentDialogStep('confirm');
