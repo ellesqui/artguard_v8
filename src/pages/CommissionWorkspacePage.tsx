@@ -58,6 +58,38 @@ function formatDemoAmount(amount: number, currency: string): string {
   return currency === 'PHP' ? `₱${formatted}` : `${currency} ${formatted}`;
 }
 
+function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; code?: string } {
+  const record = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; message?: unknown }
+    : null;
+  const code = typeof record?.code === 'string' && /^[A-Z0-9]{5}$/.test(record.code)
+    ? record.code
+    : undefined;
+  const message = typeof record?.message === 'string'
+    ? record.message
+    : error instanceof Error ? error.message : '';
+  const normalizedMessage = message.toUpperCase();
+  let category = 'backend-or-response-rejection';
+  if (normalizedMessage.includes('DEMO_PAYMENTS_DISABLED')) category = 'demo-payments-disabled';
+  else if (normalizedMessage.includes('COMMISSION_PRICE_UNAVAILABLE')) category = 'commission-price-unavailable';
+  else if (
+    normalizedMessage.includes('NOT AUTHENTICATED')
+    || normalizedMessage.includes('ONLY CLIENT ACCOUNTS')
+  ) category = 'authorization-rejected';
+  else if (normalizedMessage.includes('PAYMENT NOT FOUND')) category = 'payment-record-not-found';
+  else if (
+    normalizedMessage.includes('ONLY ACCEPTED COMMISSIONS')
+    || normalizedMessage.includes('COMMISSION_CANCELLED')
+  ) category = 'commission-ineligible';
+  else if (normalizedMessage.includes('PROVIDER')) category = 'provider-payment-rejected';
+  else if (normalizedMessage.includes('PAYMENT DOES NOT MATCH')) category = 'payment-record-mismatch';
+  else if (normalizedMessage.includes('PENDING')) category = 'payment-state-conflict';
+  else if (code === '42501') category = 'permission-denied';
+  else if (code?.startsWith('PGRST')) category = 'rpc-or-response-error';
+
+  return { category, ...(code ? { code } : {}) };
+}
+
 function canEditArtistReview(review: Pick<SubmittedArtistReview, 'created_at' | 'edited_at'>, now = Date.now()): boolean {
   const createdAt = Date.parse(review.created_at);
   return review.edited_at === null
@@ -625,6 +657,7 @@ export function CommissionWorkspacePage() {
     ) return;
 
     const requestedCommissionId = realCommission.id;
+    let failureStage = 'load-or-create-payment';
     paymentActionInFlight.current = true;
     setPaymentActionLoading(true);
     setDemoPaymentDialogStep('processing');
@@ -636,6 +669,7 @@ export function CommissionWorkspacePage() {
         if (activeOrderId.current !== requestedCommissionId) return;
       }
 
+      failureStage = 'validate-pending-payment';
       if (
         payment.commission_id !== requestedCommissionId
         || payment.payer_id !== user.id
@@ -662,8 +696,10 @@ export function CommissionWorkspacePage() {
         throw new Error('Provider payment records cannot use demo simulation.');
       }
 
+      failureStage = 'demo-success-rpc';
       const simulatedPayment = await simulateCommissionPaymentDemoSuccess(payment.id);
       if (activeOrderId.current !== requestedCommissionId) return;
+      failureStage = 'validate-persisted-demo-payment';
       if (
         simulatedPayment.id !== payment.id
         || simulatedPayment.commission_id !== realCommission.id
@@ -684,7 +720,12 @@ export function CommissionWorkspacePage() {
       showToast('Demo payment successful. No real money was charged or transferred.');
     } catch (error) {
       if (activeOrderId.current !== requestedCommissionId) return;
-      const message = error instanceof Error ? error.message : '';
+      const message = typeof error === 'object' && error !== null && 'message' in error
+        && typeof error.message === 'string'
+        ? error.message
+        : error instanceof Error ? error.message : '';
+      const diagnostics = getDemoPaymentFailureDiagnostics(error);
+      console.error('ArtGuard: demo payment failed', { stage: failureStage, ...diagnostics });
       setDemoPaymentDialogStep('confirm');
       setPaymentError(message.includes('DEMO_PAYMENTS_DISABLED')
         ? 'Simulated payments are currently unavailable. No payment was recorded.'
@@ -1680,13 +1721,12 @@ export function CommissionWorkspacePage() {
                     <Icon name="check-circle" />
                   </div>
                   <div className="row-between workspace-demo-payment-dialog-heading">
-                    <h2 id="demo-payment-title">Payment receipt</h2>
+                    <h2 id="demo-payment-title">Payment successful</h2>
                     <span className="badge badge-warning">SIMULATED</span>
                   </div>
-                  <p>Your simulated payment has been recorded.</p>
                   <div className="workspace-demo-payment-receipt">
                     <div className="workspace-demo-payment-receipt-amount">
-                      <span className="t-xs c-low">Simulated amount</span>
+                      <span className="t-xs c-low">Amount</span>
                       <strong>{formatDemoAmount(demoPaymentReceipt.amount, demoPaymentReceipt.currency)}</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
@@ -1710,8 +1750,8 @@ export function CommissionWorkspacePage() {
                       <strong>{formatDemoTimestamp(demoPaymentReceipt.demo_paid_at ?? demoPaymentReceipt.paid_at) ?? 'Unavailable'}</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
-                      <span>Status</span>
-                      <strong className="c-success">PAID</strong>
+                      <span>Payment status</span>
+                      <strong className="c-success">Transfer complete</strong>
                     </div>
                   </div>
                   <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
