@@ -15,6 +15,9 @@ export interface PublicProfile {
   onboarded?: boolean | null;
   last_seen_at?: string | null;
   artist_verification_status?: ArtistVerificationStatus | null;
+}
+
+export interface MyProfile extends PublicProfile {
   artist_verification_submitted_at?: string | null;
   artist_verification_reviewed_at?: string | null;
   artist_verification_reviewed_by?: string | null;
@@ -22,6 +25,9 @@ export interface PublicProfile {
   artist_verification_artwork_id?: string | null;
   is_admin?: boolean | null;
 }
+
+const PUBLIC_PROFILE_COLUMNS =
+  'id,name,username,role,bio,interests,avatar_data_url,is_pro,accepting_commissions,onboarded,last_seen_at,artist_verification_status';
 
 export interface PendingArtistVerification {
   artist_id: string;
@@ -149,47 +155,57 @@ export async function ensureMyProfile(profile: {
   username?: string;
   role: UserRole;
   onboarded?: boolean;
-}): Promise<PublicProfile | null> {
+}): Promise<MyProfile | null> {
   if (!supabase) return null;
-  const { data: existing, error: lookupError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', profile.id)
-    .maybeSingle();
-  if (lookupError) throw lookupError;
-  if (existing) return existing as PublicProfile;
+  const existing = await getMyProfile(profile.id);
+  if (existing) return existing;
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .insert({
-      id: profile.id,
-      name: profile.name,
-      username: profile.username ?? 'user',
-      role: profile.role,
-      onboarded: profile.onboarded ?? false,
-    })
-    .select('*')
-    .single();
+  const { error } = await supabase.from('profiles').insert({
+    id: profile.id,
+    name: profile.name,
+    username: profile.username ?? 'user',
+    role: profile.role,
+    onboarded: profile.onboarded ?? false,
+  });
   if (error) throw error;
-  return data as PublicProfile;
+  const created = await getMyProfile(profile.id);
+  if (!created) throw new Error('The profile could not be loaded after it was created.');
+  return created;
 }
 
 export async function getPublicProfile(userId: string): Promise<PublicProfile | null> {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('profiles')
-    .select('id,name,username,role,bio,interests,avatar_data_url,is_pro,accepting_commissions,onboarded,last_seen_at,artist_verification_status')
+    .select(PUBLIC_PROFILE_COLUMNS)
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
   return data as PublicProfile | null;
 }
 
-export async function getMyProfile(userId: string): Promise<PublicProfile | null> {
-  if (!supabase) return null;
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+export async function getPublicProfiles(userIds: readonly string[]): Promise<PublicProfile[]> {
+  if (!supabase) return [];
+  const ids = [...new Set(userIds.filter((userId) => userId.length > 0))];
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .in('id', ids);
   if (error) throw error;
-  return data as PublicProfile | null;
+  return (data ?? []) as PublicProfile[];
+}
+
+export async function getMyProfile(expectedUserId?: string): Promise<MyProfile | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('get_my_profile');
+  if (error) throw error;
+  const profile = data as MyProfile | null;
+  if (profile && expectedUserId && profile.id !== expectedUserId) {
+    throw new Error('The authenticated profile does not match the requested account.');
+  }
+  return profile;
 }
 
 export async function submitArtistVerification(
@@ -247,7 +263,7 @@ export async function searchProfiles(term: string, currentUserId: string): Promi
   const safe = clean.replace(/[%_]/g, '\\$&');
   const { data, error } = await supabase
     .from('profiles')
-    .select('id,name,username,role,bio,interests,avatar_data_url,is_pro,accepting_commissions,onboarded,last_seen_at,artist_verification_status')
+    .select(PUBLIC_PROFILE_COLUMNS)
     .neq('id', currentUserId)
     .or(`name.ilike.%${safe}%,username.ilike.%${safe}%`)
     .order('name')
@@ -265,7 +281,7 @@ export async function listArtistProfiles(currentUserId: string): Promise<PublicP
   if (!supabase) return [];
   const { data, error } = await supabase
     .from('profiles')
-    .select('id,name,username,role,bio,interests,avatar_data_url,is_pro,accepting_commissions,onboarded,last_seen_at,artist_verification_status')
+    .select(PUBLIC_PROFILE_COLUMNS)
     .eq('role', 'artist')
     .neq('id', currentUserId)
     .order('name')
@@ -415,14 +431,7 @@ export async function loadConversations(
     ),
   );
 
-  const { data: profileRows, error: profilesError } = otherUserIds.length
-    ? await supabase
-        .from('profiles')
-        .select('id,name,username,role,bio,interests,avatar_data_url,is_pro,onboarded,last_seen_at')
-        .in('id', otherUserIds)
-    : { data: [], error: null };
-
-  if (profilesError) throw profilesError;
+  const profileRows = await getPublicProfiles(otherUserIds);
 
   const profileById = new Map<string, PublicProfile>();
   for (const profile of (profileRows ?? []) as PublicProfile[]) {

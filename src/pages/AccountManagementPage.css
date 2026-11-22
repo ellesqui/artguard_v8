@@ -9,6 +9,31 @@
   line-height: 1.45;
 }
 
+.account-action-error {
+  margin: 10px 0 0;
+  color: var(--ag-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-deletion-status {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: var(--ag-r-sm);
+  color: var(--ag-text-mid);
+  background: var(--ag-surface-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-deletion-status strong {
+  color: var(--ag-text-hi);
+  text-transform: capitalize;
+}
+
 .account-danger-card .t-sm {
   color: var(--ag-danger);
 }

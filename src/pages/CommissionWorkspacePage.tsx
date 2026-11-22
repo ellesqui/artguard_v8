@@ -20,7 +20,7 @@ import { listArtistReviews, submitArtistReview, updateArtistReview, type ArtistR
 import { approveCommissionDeliverable, createCommissionDeliverableSignedUrl, listCommissionDeliverables, uploadCommissionDeliverable, type CommissionDeliverable } from '../lib/supabaseDeliverables';
 import { approveCommissionMilestone, createDefaultCommissionMilestones, listCommissionMilestones, startCommissionMilestone, submitCommissionMilestone, type CommissionMilestone } from '../lib/supabaseMilestones';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
-import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentFailure, simulateCommissionPaymentRefund, simulateCommissionPaymentSuccess, type CommissionPayment } from '../lib/supabasePayments';
+import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentFailure, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -324,7 +324,8 @@ export function CommissionWorkspacePage() {
         && commissionPayment.payee_id === realCommission.artist_id
         && commissionPayment.amount === realCommission.amount
         && commissionPayment.currency === realCommission.currency
-        && commissionPayment.status === 'PAID';
+        && commissionPayment.status === 'PAID'
+        && Boolean(commissionPayment.provider_verified_at);
       if (!hasCommissionPaymentPrice(realCommission) || !matchingPaymentIsPaid) return;
     }
     setStartingCommission(true);
@@ -571,7 +572,7 @@ export function CommissionWorkspacePage() {
     }
   };
 
-  const handleSimulatePayment = async (outcome: 'success' | 'failure') => {
+  const handleSimulatePaymentFailure = async () => {
     if (
       !commissionPayment
       || !user
@@ -585,9 +586,7 @@ export function CommissionWorkspacePage() {
     setPaymentActionLoading(true);
     setPaymentError(undefined);
     try {
-      setCommissionPayment(outcome === 'success'
-        ? await simulateCommissionPaymentSuccess(commissionPayment.id)
-        : await simulateCommissionPaymentFailure(commissionPayment.id));
+      setCommissionPayment(await simulateCommissionPaymentFailure(commissionPayment.id));
     } catch {
       setPaymentError('Could not update the simulated payment. Please try again.');
     } finally {
@@ -758,7 +757,8 @@ export function CommissionWorkspacePage() {
       && commissionPayment.payee_id === realCommission.artist_id
       && commissionPayment.amount === realCommission.amount
       && commissionPayment.currency === realCommission.currency
-      && commissionPayment.status === 'PAID';
+      && commissionPayment.status === 'PAID'
+      && Boolean(commissionPayment.provider_verified_at);
     const matchingPaymentParties = paymentStatusKnown
       && commissionPayment?.commission_id === realCommission.id
       && commissionPayment.payer_id === realCommission.client_id
@@ -778,6 +778,11 @@ export function CommissionWorkspacePage() {
           ? 'REFUNDED'
           : matchingPaymentIsPaid
             ? 'ESCROW NOT TRACKED'
+            : matchingPaymentParties
+              && commissionPayment.status === 'PAID'
+              && paymentAmountMatchesCommission
+              && !commissionPayment.provider_verified_at
+              ? 'PAID · UNVERIFIED'
             : matchingPaymentParties
               && (commissionPayment.status === 'PAID' || commissionPayment.status === 'REFUNDED')
               && !paymentAmountMatchesCommission
@@ -803,7 +808,7 @@ export function CommissionWorkspacePage() {
         ? 'badge-success'
         : escrowStatus === 'PAYMENT FAILED'
           ? 'badge-danger'
-          : escrowStatus === 'AWAITING PAYMENT' || escrowStatus === 'AMOUNT UNAVAILABLE' || escrowStatus === 'PAYMENT MISMATCH'
+          : escrowStatus === 'AWAITING PAYMENT' || escrowStatus === 'AMOUNT UNAVAILABLE' || escrowStatus === 'PAYMENT MISMATCH' || escrowStatus === 'PAID · UNVERIFIED'
             ? 'badge-warning'
             : 'badge-accent';
       const isReviewEligibleClient = isClient && user.role === 'client';
@@ -1001,8 +1006,9 @@ export function CommissionWorkspacePage() {
                 )}
                 {commissionPayment?.status === 'PENDING' && <div className="t-sm c-warning">Payment: PENDING</div>}
                 {commissionPayment?.status === 'PAID' && (
-                  <div className="t-sm c-success">
-                    Payment: PAID{commissionPayment.paid_at ? ` · ${formatCommissionDate(commissionPayment.paid_at)}` : ''}
+                  <div className={`t-sm ${commissionPayment.provider_verified_at ? 'c-success' : 'c-warning'}`}>
+                    Payment: PAID{commissionPayment.provider_verified_at ? '' : ' · UNVERIFIED'}
+                    {commissionPayment.provider_verified_at && commissionPayment.paid_at ? ` · ${formatCommissionDate(commissionPayment.paid_at)}` : ''}
                   </div>
                 )}
                 {commissionPayment?.status === 'FAILED' && <div className="t-sm c-danger">Payment: FAILED</div>}
@@ -1029,7 +1035,7 @@ export function CommissionWorkspacePage() {
                     onClick={() => void handleCreatePayment()}
                     disabled={paymentActionLoading || paymentLoading}
                   >
-                    {paymentActionLoading ? 'Creating payment…' : 'Pay Commission'}
+                    {paymentActionLoading ? 'Creating payment record…' : 'Create Payment Record'}
                   </button>
                 )}
                 {canManagePayment && realCommission.status === 'ACCEPTED' && paymentAvailable && commissionPayment?.status === 'FAILED' && (
@@ -1040,22 +1046,21 @@ export function CommissionWorkspacePage() {
                     onClick={() => void handleCreatePayment()}
                     disabled={paymentActionLoading || paymentLoading}
                   >
-                    {paymentActionLoading ? 'Creating payment…' : 'Try Payment Again'}
+                    {paymentActionLoading ? 'Creating payment record…' : 'Create New Payment Record'}
                   </button>
                 )}
                 {canManagePayment && commissionPayment?.status === 'PENDING' && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleSimulatePayment('success')} disabled={paymentActionLoading}>
-                      {paymentActionLoading ? 'Updating…' : 'Simulate Successful Payment'}
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleSimulatePayment('failure')} disabled={paymentActionLoading}>
-                      Simulate Payment Failure
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleSimulatePaymentFailure()} disabled={paymentActionLoading}>
+                      {paymentActionLoading ? 'Updating…' : 'Simulate Payment Failure'}
                     </button>
                   </div>
                 )}
                 {paymentError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>{paymentError}</div>}
-                {canManagePayment && commissionPayment?.status === 'PENDING' && (
-                  <div className="t-xs c-low" style={{ marginTop: 8 }}>School-project simulation only. No real payment is processed.</div>
+                {requiresPaidPaymentBeforeStart && (
+                  <div className="t-xs c-low" style={{ marginTop: 8 }}>
+                    No real payment provider is configured. Creating a payment record does not charge funds; this commission cannot start until a trusted provider verifies payment.
+                  </div>
                 )}
                 {canRefundPayment && (
                   <button

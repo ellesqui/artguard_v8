@@ -28,7 +28,9 @@ export interface AuthUser {
 }
 
 export interface MockAccount extends AuthUser {
-  password: string;
+  password?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
   dateOfBirth?: string;
 }
 

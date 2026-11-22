@@ -282,7 +282,9 @@ browser session has its own Supabase login.
 When Supabase environment variables are missing, ArtGuard Hub keeps the original
 local/demo behavior so the UI can still be opened without a cloud project.
 That fallback stores demo accounts in `localStorage` and intentionally is not
-production-safe.
+production-safe. New mock passwords are stored as salted PBKDF2 hashes, and
+legacy plaintext mock passwords are upgraded on a successful local login.
+This remains demo-only authentication; it does not replace server-side auth.
 
 With Supabase configured, authentication, profiles, conversations, messages,
 reactions/read state, and presence use the real backend. Other areas of the

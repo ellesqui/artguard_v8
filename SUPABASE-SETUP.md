@@ -155,10 +155,15 @@ schema/profile repair scripts. This creates:
 - A private `artworks` Storage bucket with owner-scoped object policies.
 - JPG/PNG and 40MB server-enforced Storage/database constraints.
 
-The Shield upload path stores originals under an authenticated user's folder
-and never creates public URLs. The application can request a short-lived
-owner-authorized signed URL, but Batch A does not yet process watermarking,
-cloaking, tiling, encryption, or protected derivatives.
+The Shield upload path stores originals in a private bucket under an
+authenticated user's folder and requests short-lived signed URLs. The current
+client generates a protected derivative in the browser: enhanced and maximum
+levels add a visible ArtGuard mark, while maximum also repeats a text overlay.
+Canvas tiling, dynamic cloaking, and right-click blocking are client-side
+deterrents only. They are not encryption, server-side transformation, DRM, or
+protection against screenshots, browser tools, or a determined recipient.
+Standard level does not add a watermark. Never describe these controls as
+preventing copying.
 
 If the migration has not been run, Shield uploads fail with a setup error; the
 app does not fall back to local or public storage.
@@ -277,8 +282,12 @@ notification store or emit notifications for existing likes/comments. Existing
 recipient-filtered Realtime delivery is reused. Do not run this migration
 against production automatically.
 
-Password reset is wired to Supabase Auth, but the app does not yet include a dedicated reset-password
-page route. That is a separate follow-up feature.
+Password reset has `/forgot-password` and `/reset-password` routes. The
+forgot-password flow requests a Supabase Auth recovery email that redirects to
+`/reset-password`; the reset page checks the recovery session and calls
+`updateUser({ password })`. Configure and verify the provider's recovery
+redirect allow-list for each deployed hostname. In mock mode, password-reset
+behavior is demo-only and does not send an email or change a Supabase password.
 
 
 ## Usernames and public profiles update
@@ -314,3 +323,280 @@ for either owner role. The third preserves public-post provenance and the paid-b
 requirement for both commission participant mappings. Do not run these migrations before
 their existing commission-post, comments, notifications, commissions, and payment
 dependencies are installed.
+
+## Phase 0 profile expand/contract and transaction hardening
+
+**None of these corrective migrations has been applied to production.** They
+are not run by the application, build, Supabase CLI, or Vercel deployment.
+Validate all referenced tables, columns, policies, and exact function
+signatures against a disposable Supabase-compatible project before production
+approval. Repository SQL files do not prove that the target database has those
+objects or migration history.
+
+### Pro entitlement write protection
+
+`artist-verification-foundation.sql` and
+`artist-commission-availability.sql` grant authenticated clients column-level
+`UPDATE` access to `profiles.is_pro`. Apply
+`supabase/pro-entitlement-hardening.sql` after both migrations to revoke that
+client write access while preserving ordinary profile edits and existing
+`is_pro` values. Validate it in staging before relying on `is_pro` as a
+trusted entitlement:
+
+```sql
+select has_column_privilege(
+  'authenticated', 'public.profiles', 'is_pro', 'UPDATE'
+) as authenticated_can_update_is_pro;
+```
+
+The result must be `false`; also verify that allowed profile fields remain
+editable and that entitlement changes use a trusted backend process. No live
+database check or production application of this migration has been performed.
+
+The forward-only database migration order is:
+
+1. `supabase/profile-access-expand.sql`
+2. `supabase/commission-transition-hardening.sql`
+3. `supabase/phase0-permission-hardening.sql`
+4. `supabase/commission-payment-simulation-lockdown.sql` — after the latest
+   payment RPC definition/grants, including
+   `commission-payment-cancellation-coordination.sql`, and the current
+   `start_commission(uuid)` payment guard; this revokes authenticated simulated
+   success and direct payment-table writes, and requires provider verification
+   before paid-gated commissions can start.
+5. `supabase/pro-entitlement-hardening.sql` — after both
+   `artist-verification-foundation.sql` and
+   `artist-commission-availability.sql`, so neither earlier grant can restore
+   authenticated `is_pro` writes.
+6. `supabase/profile-access-hardening.sql` — the profile **contract** stage;
+   apply only after the frontend and legacy-client gate below.
+
+The expand migration adds `get_my_profile()` and
+`is_current_user_admin()` while explicitly retaining authenticated table-wide
+profile SELECT and the existing public-profile row policy. This is temporary
+backward compatibility for already-deployed bundles that still issue
+`SELECT *`. It does not alter profile INSERT grants/policies or the Auth signup
+trigger. The new frontend retrieves the signed-in user's full record through
+`get_my_profile()` and uses explicit safe projections for other profiles.
+Apply Expand once and in order only: rerunning it after Contract would restore
+table-wide profile SELECT and reopen sensitive-column access.
+
+The commission transition migration serializes deliverable and milestone
+approvals with commission state, rejects NULL or incorrect client roles, and
+locks the commission before completion checks. The closed-commission child
+mutation guard takes that same lock, preventing late workflow writes from
+racing a completion or cancellation. Cancellation voids pending payment
+records only; a paid record is not represented as refunded. Refunds remain a
+separate simulated action.
+
+The permission migration removes inherited `PUBLIC` and `anon` execution from
+the reviewed RPCs and submitted-commission Storage helper while preserving
+`authenticated` and `service_role` execution. It leaves the already restricted
+`start_commission` grants and the other two Storage-helper grants unchanged.
+It standardizes the reviewed `SECURITY DEFINER` lookup paths, including the
+profile helpers created by the expand stage.
+
+The payment lockdown migration must follow
+`commission-payment-cancellation-coordination.sql`, which also re-grants
+authenticated access to the success RPC, and the current
+`start_commission(uuid)` payment guard. It removes `PUBLIC`, `anon`, and
+`authenticated` execution from `simulate_commission_payment_success(uuid)`,
+preserves `service_role` execution, and hardens the function's search path. It
+also revokes table- and column-level payment writes from client roles and adds
+`provider_verified_at`. A trigger blocks payment-gated commission starts unless
+a matching PAID record has that marker. No current frontend or RPC sets it.
+Existing `PAID` records remain unchanged and unverified; they cannot authorize
+new starts, while already-started commissions are not changed. The migration
+does not add a provider or make any payment real. Review payment records and
+active commissions using trusted evidence before staging or production use.
+
+The contract migration removes table-wide and sensitive-column profile reads,
+then grants authenticated clients only the safe public profile columns.
+`get_my_profile()` continues to return the caller's own complete profile.
+Admin verification remains behind its authorization-checked RPCs, and the
+protected verification-preview policy uses `is_current_user_admin()` rather
+than exposing `is_admin`. The signup trigger, self-row fallback insert,
+commission, chat, Marketplace, Discover, and Shield flows must be tested before
+this stage.
+
+### Required release sequence
+
+1. Apply `profile-access-expand.sql` in the verified non-production project.
+   Keep the existing authenticated `SELECT *` behavior during this stage.
+2. Apply `commission-transition-hardening.sql`, then
+   `phase0-permission-hardening.sql`, after their exact prerequisites are
+   confirmed. These do not contract profile column access.
+3. Apply `commission-payment-simulation-lockdown.sql` after verifying its exact
+   function signature and after all migrations that define or grant that
+   function, including `commission-payment-cancellation-coordination.sql`.
+   Existing frontend bundles may display
+   a now-disabled simulation control until refreshed; the database denies the
+   call regardless.
+4. Deploy the updated frontend. A Vercel deployment does **not** invalidate
+   JavaScript already loaded in open tabs.
+5. Verify `get_my_profile()` and all public profile consumers, including
+   onboarding, account settings, Marketplace/Discover, chat, commission
+   workspaces, admin verification, and protected previews. Exercise non-payment
+   commission workflows; payment-gated commissions cannot start until a trusted
+   provider integration exists.
+6. Establish the legacy-client deprecation gate: notify users, allow active
+   commission work to reach a safe saved state, and have users close/reopen or
+   refresh the app while idle. Review Supabase API logs for legacy
+   `profiles?select=*` requests and wait through an owner-defined observation
+   period. Do not infer client refresh from Vercel deployment alone.
+7. Apply `profile-access-hardening.sql` only after the owner confirms the
+   legacy-client gate is satisfied. Verify profile projections, admin review,
+   Storage previews, signup, and the active commission/chat workflows again.
+
+There is no existing minimum-frontend-version or forced-refresh mechanism.
+No forced reload is added here: an already-loaded legacy bundle cannot receive
+new polling code, and reloading during unsaved commission work could disrupt a
+user. Log monitoring alone cannot detect a dormant tab, so if the owner cannot
+confirm old sessions have been drained, **do not apply the contract migration**.
+
+### Rollback and recovery
+
+The expand stage is additive and can normally remain installed if frontend
+deployment is delayed or rolled back. Do not drop its helpers while any
+frontend or policy may call them. After a migration commits, there is no
+automatic rollback: prepare a reviewed forward correction and a database
+backup/recovery plan before production work.
+
+If a contract rollout causes profile failures, keep or redeploy a compatible
+frontend and repair forward. Regranting table-wide SELECT may restore legacy
+behavior, but it also restores access to sensitive profile columns; treat that
+as an explicitly approved, temporary security exception, not the routine
+rollback. Do not deploy an old bundle after contract without a separately
+reviewed recovery plan.
+
+Before any production change, validate the prerequisite feature migrations
+that define the verification RPCs, commission request/review/milestone/
+cancellation/completion/start RPCs, and Storage helpers. Then apply each
+corrective migration separately and test signup, public profiles/discovery,
+chat attachments, protected artwork access, verification administration, and
+commission transitions. These files are not replacements for historical SQL,
+and their presence in the repository is not proof that production has been
+updated.
+
+## Current commission payment boundary
+
+`public.commission_payments` persists participant IDs, amount, currency,
+provider/reference placeholders, and a status. The app can create records and
+the failure/refund actions remain simulations that update database state only.
+After `commission-payment-simulation-lockdown.sql`, authenticated clients can
+no longer call the simulated-success RPC or write payment rows directly; only
+a trusted `service_role` caller can execute the simulation. The simulation does
+not set `provider_verified_at`, so it cannot authorize a commission start.
+There is still no checkout provider, verified webhook, idempotency ledger,
+escrow, or artist payout integration. A stored `PAID` status is not proof that a
+provider charged or settled funds. Existing `PAID` rows remain unchanged and
+have no verification marker; reconcile them using trusted evidence.
+
+Before real payment processing, select a provider and add a server-only checkout
+creation path, verify webhook signatures and event ownership server-side,
+record provider event/transaction IDs with database-enforced idempotency,
+validate amount/currency against the locked commission, and implement
+reconciled refund and payout records. Provider secrets must remain in trusted
+server/Edge Function configuration; browser-supplied payment success must
+never set a real payment to `PAID`.
+
+## Profile privacy, avatars, and DOB
+
+The current profile editor converts selected PNG/JPEG avatars to data URLs and
+writes the Base64 payload into `profiles.avatar_data_url`; the public-profile
+projection includes that field. The file input's `accept` attribute is only a
+browser hint, and the current editor does not enforce an upload-size limit.
+Large avatar payloads can inflate profile rows and public profile responses.
+Before scaling this feature, move avatars to a size-limited private/public
+Storage design with server-enforced MIME/size checks; do not treat the browser
+hint as validation.
+
+`profile-private-details.sql` creates a separately restricted DOB table and an
+Auth-user trigger that reads `raw_user_meta_data.date_of_birth`. The current
+signup call does not send that metadata and the UI has no DOB capture, so the
+file alone does not collect or backfill DOB values. Mock account types may have
+an optional DOB field, but the public-user conversion strips it. Confirm the
+intended collection/legal basis before enabling DOB capture.
+
+## Frontend and Edge Function deployment checks
+
+The frontend selects Supabase mode when both `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY` are present; otherwise auth falls back to the
+browser mock. Only the publishable key belongs in frontend configuration.
+`vercel.json` contains the SPA history rewrite, not project/environment
+associations. Vercel CLI and authorized project inspection were unavailable
+during this review, and `.env.local` values were not read. Verify Vercel's
+production/preview variable associations and Supabase project URL in the
+provider dashboard before release.
+
+`supabase/config.toml` sets `verify_jwt = false` for
+`google-login-existing`; that function performs its own Google-token
+validation. Confirm the deployed Edge Function source revision and required
+environment-variable names/configuration in the Supabase dashboard. The local
+config does not prove which revision or values are deployed. Do not put
+service-role keys in frontend `VITE_*` variables.
+
+## Account deactivation and deletion requests
+
+`supabase/account-lifecycle-hardening.sql` is a forward-only migration. Run it
+only in staging first, after the profile, commission, payment, artwork, chat,
+and notification tables listed at the start of the migration exist. It adds
+server-authorized `deactivate_my_account()` and
+`request_my_account_deletion()` RPCs, account-state checks for authenticated
+table and ArtGuard Storage access, and a private deletion-request status table.
+The RPCs derive identity from `auth.uid()`; the frontend supplies no user ID.
+
+Recommended rollout:
+
+1. Reconcile migration history and apply/test the Phase 0 Expand and corrective
+   migrations in their documented order. Keep the profile Contract migration
+   blocked until the legacy-client gate in the Phase 0 deployment guide is met.
+2. Verify all prerequisites and test `account-lifecycle-hardening.sql` in a
+   disposable Supabase staging project. Specifically exercise both roles,
+   active commission/payment rejection, duplicate requests, RLS, Storage, and
+   session revocation.
+3. Apply the account-lifecycle migration before deploying the frontend that
+   calls `is_my_account_active()` and the account-management RPCs. The new
+   frontend fails closed if this migration is missing.
+4. Deploy the frontend only after staging checks pass. Existing active clients
+   remain compatible; deactivated users are blocked by database triggers and
+   restrictive RLS even when using an older frontend.
+5. Keep profile Contract rollout separate. Do not infer that Vercel deployment
+   refreshes already-open tabs, and do not apply Contract until the legacy
+   profile `SELECT *` clients have been retired.
+
+Deactivation is reversible state, not deletion. It is rejected while the
+account has an active commission, pending payment, open/selected commission
+post, or pending application. A successful request preserves profile,
+artwork, chat, commission, and financial records, then asks Supabase Auth to
+sign out all sessions. Access tokens already issued may remain valid until
+expiry; the database guards are the enforcement boundary during that period.
+Reactivation is currently a support/admin operation requiring a verified
+operator; no self-service reactivation or deletion-review dashboard exists.
+
+Deletion is a private request, not an immediate hard delete. It is rejected
+until the same active-work checks pass, deduplicated while pending/approved,
+and readable only by the requesting account through RLS. While pending or
+approved, protected table writes and ArtGuard Storage access are blocked to
+prevent new work from appearing during review. Authorized support
+must review retention, financial, dispute, artwork, chat, and legal obligations
+before any final action. This repository does not establish a retention period
+or implement final deletion, so do not mark a request complete or claim data
+erasure without that separate authorized process.
+
+The migration has not been applied to production. Before production use, staging
+must verify the exact live table/RPC/policy definitions, Storage behavior,
+Auth global sign-out, concurrent account writes versus deactivation, old access
+tokens, and every SECURITY DEFINER read RPC that may expose private history.
+No live Supabase account lifecycle behavior has been verified here.
+
+Local validation used a disposable PGlite database with test-only Supabase
+roles, `auth.uid()`, Auth users/profiles, the required commission/payment/chat/
+artwork/notification tables, and `storage.objects`. Twenty-two assertions passed
+across the lifecycle suite and follow-up compatibility checks, including
+idempotency, Artist and Client deactivation, deletion-request privacy and
+deduplication, active-work rejection, blocked post-deactivation writes,
+signup lifecycle-row creation, active Admin profile reads, active Storage
+preview reads, and trusted `service_role` state management. PGlite does not
+verify Supabase Auth token revocation, actual Storage policy integration,
+production RLS definitions, or concurrent sessions.

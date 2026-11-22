@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ScreenShell } from '../components/ui/ScreenShell';
@@ -9,6 +9,7 @@ import { Icon } from '../assets/icons';
 import { useAuth } from '../context/AuthContext';
 import { useMockToast } from '../components/ui/MockToast';
 import { usernameFromEmail } from '../lib/supabaseData';
+import { supabase } from '../lib/supabase';
 import { validateEmailField } from '../utils/validators';
 import './AccountManagementPage.css';
 
@@ -16,16 +17,22 @@ type DestructiveAction = 'deactivate' | 'delete';
 
 function ConfirmationDialog({
   action,
+  backendMode,
+  busy,
+  error,
   onCancel,
   onConfirm,
 }: {
   action: DestructiveAction;
+  backendMode: 'supabase' | 'mock';
+  busy: boolean;
+  error?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState('');
   const isDelete = action === 'delete';
-  const title = isDelete ? 'Delete your account?' : 'Deactivate your account?';
+  const title = isDelete ? 'Request account deletion?' : 'Deactivate your account?';
 
   return (
     <div className="account-dialog-backdrop" role="presentation">
@@ -36,15 +43,17 @@ function ConfirmationDialog({
         <h2 id="account-dialog-title">{title}</h2>
         <p>
           {isDelete
-            ? 'This permanently removes your account and associated access. This action cannot be undone.'
-            : 'Deactivation should make your account unavailable while preserving a path to recovery.'}
+            ? 'This submits a private deletion request for review. It does not immediately delete your account or data; protected writes and uploads are blocked while the request is pending.'
+            : 'Deactivation blocks account access while preserving your profile, artwork, commission history, and financial records. Contact support to request reactivation.'}
         </p>
         <p className="account-dialog-limit">
-          This action is not available until a verified backend account-management endpoint is configured. No changes will be made.
+          {backendMode === 'supabase'
+            ? 'Active commissions, pending payments, open commission posts, and pending applications must be resolved first.'
+            : 'Account actions are unavailable in demo mode. No changes will be made.'}
         </p>
         {isDelete && (
           <label className="field-label" htmlFor="confirm-delete">
-            Type DELETE to confirm
+            Type DELETE to confirm this request
             <input
               id="confirm-delete"
               className="account-dialog-input"
@@ -55,17 +64,21 @@ function ConfirmationDialog({
             />
           </label>
         )}
+        {error && <p className="account-action-error" role="alert">{error}</p>}
         <div className="account-dialog-actions">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
           <button
             type="button"
             className="btn btn-secondary btn-sm account-danger-button"
-            disabled={isDelete && typed !== 'DELETE'}
+            disabled={busy || (isDelete && typed !== 'DELETE')}
             onClick={onConfirm}
+            aria-busy={busy}
           >
-            {isDelete ? 'Confirm Delete' : 'Confirm Deactivation'}
+            {busy
+              ? 'Submitting...'
+              : isDelete ? 'Submit Deletion Request' : 'Confirm Deactivation'}
           </button>
         </div>
       </section>
@@ -75,13 +88,46 @@ function ConfirmationDialog({
 
 export function AccountManagementPage() {
   const navigate = useNavigate();
-  const { user, backendMode, changeEmail } = useAuth();
+  const { user, backendMode, changeEmail, deactivateAccount, requestAccountDeletion } = useAuth();
   const { toast, showToast } = useMockToast();
   const [email, setEmail] = useState(user?.email ?? '');
   const [emailError, setEmailError] = useState<string | undefined>();
   const [emailSuccess, setEmailSuccess] = useState<string | undefined>();
   const [savingEmail, setSavingEmail] = useState(false);
   const [dialogAction, setDialogAction] = useState<DestructiveAction | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string>();
+  const [deletionRequest, setDeletionRequest] = useState<{ status: string; requested_at: string } | null>(null);
+  const [deletionRequestLoadError, setDeletionRequestLoadError] = useState<string>();
+
+  useEffect(() => {
+    if (backendMode !== 'supabase' || !supabase || !user?.id) return undefined;
+    let active = true;
+    setDeletionRequestLoadError(undefined);
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('account_deletion_requests')
+          .select('status, requested_at')
+          .order('requested_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!active) return;
+        if (error) {
+          setDeletionRequestLoadError(error.message);
+          return;
+        }
+        setDeletionRequest(data);
+      } catch (error) {
+        if (!active) return;
+        setDeletionRequestLoadError(error instanceof Error ? error.message : 'Unable to load deletion request status.');
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [backendMode, user?.id]);
 
   const roleLabel = user?.role === 'artist' ? 'Artist' : user?.role === 'client' ? 'Client' : '—';
   const username = user?.username || usernameFromEmail(user?.email);
@@ -113,10 +159,53 @@ export function AccountManagementPage() {
     if (backendMode === 'mock') showToast('Email updated');
   };
 
-  const confirmUnavailableAction = () => {
+  const confirmAccountAction = async () => {
+    if (!dialogAction || actionBusy) return;
+    const action = dialogAction;
+    setActionBusy(true);
+    setActionError(undefined);
+    let succeeded: boolean;
+    let errorMessage: string | undefined;
+    let warning: string | undefined;
+    if (action === 'deactivate') {
+      const result = await deactivateAccount();
+      succeeded = result.success;
+      errorMessage = result.error;
+      warning = result.warning;
+    } else {
+      const result = await requestAccountDeletion();
+      succeeded = result.success;
+      errorMessage = result.error;
+    }
+    setActionBusy(false);
+
+    if (!succeeded) {
+      setActionError(errorMessage ?? 'The account action could not be completed.');
+      return;
+    }
+
     setDialogAction(null);
-    showToast('No changes made — this account action needs a verified backend endpoint.');
+    if (action === 'delete') {
+      setDeletionRequest({ status: 'PENDING', requested_at: new Date().toISOString() });
+      showToast('Deletion request submitted for review. Your account and data have not been erased.');
+      return;
+    }
+
+    showToast(warning ?? 'Your account is deactivated and you have been signed out.');
+    navigate('/login', { replace: true });
   };
+
+  const deletionStatusMessage = deletionRequest?.status === 'PENDING'
+    ? 'Awaiting review. Your data remains intact, but protected account changes and uploads are blocked. Nothing has been permanently deleted.'
+    : deletionRequest?.status === 'APPROVED'
+      ? 'Approved and awaiting authorized processing. Your data has not been erased yet.'
+      : deletionRequest?.status === 'REJECTED'
+        ? 'The request was declined. Contact support if you need more information.'
+        : deletionRequest?.status === 'COMPLETED'
+          ? 'The request was marked complete by an authorized reviewer.'
+          : deletionRequest?.status === 'CANCELLED'
+            ? 'The request was cancelled.'
+            : undefined;
 
   return (
     <ScreenShell
@@ -198,16 +287,34 @@ export function AccountManagementPage() {
         <SettingsRow
           icon="alert"
           label="Delete Account"
-          sublabel="Permanently remove your account"
+          sublabel="Request deletion review — data is not immediately erased"
           onClick={() => setDialogAction('delete')}
         />
       </div>
+      {deletionRequestLoadError && (
+        <div className="account-action-error" role="alert">
+          Could not load deletion request status: {deletionRequestLoadError}
+        </div>
+      )}
+      {deletionRequest && deletionStatusMessage && (
+        <div className="account-deletion-status" role="status" aria-live="polite">
+          <strong>Deletion request: {deletionRequest.status.toLowerCase()}</strong>
+          <span>{deletionStatusMessage}</span>
+        </div>
+      )}
       {toast}
       {dialogAction && (
         <ConfirmationDialog
           action={dialogAction}
-          onCancel={() => setDialogAction(null)}
-          onConfirm={confirmUnavailableAction}
+          backendMode={backendMode}
+          busy={actionBusy}
+          error={actionError}
+          onCancel={() => {
+            if (actionBusy) return;
+            setDialogAction(null);
+            setActionError(undefined);
+          }}
+          onConfirm={() => void confirmAccountAction()}
         />
       )}
     </ScreenShell>

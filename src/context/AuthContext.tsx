@@ -14,6 +14,8 @@ import {
 const ACCOUNTS_KEY = 'artguard.mockAccounts';
 const SESSION_KEY = 'artguard.session';
 const MOCK_LATENCY_MS = 650;
+const MOCK_PASSWORD_HASH_ITERATIONS = 600_000;
+const MOCK_PASSWORD_SALT_BYTES = 16;
 type ProfileUpdatePatch = Partial<Omit<AuthUser, 'isPro'>>;
 type AuthOperation = 'login' | 'signup' | 'oauth';
 type AuthenticatedDestination = '/home' | '/onboarding/name' | '/onboarding/interests';
@@ -175,8 +177,85 @@ function writeAccounts(accounts: MockAccount[]) {
   localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
 }
 
+function secureMockAuthAvailable(): boolean {
+  return Boolean(globalThis.crypto?.subtle && globalThis.crypto?.getRandomValues);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+async function deriveMockPasswordHash(password: string, salt: Uint8Array): Promise<string> {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const saltBuffer = new ArrayBuffer(salt.byteLength);
+  new Uint8Array(saltBuffer).set(salt);
+  const derivedBits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: saltBuffer,
+      iterations: MOCK_PASSWORD_HASH_ITERATIONS,
+    },
+    key,
+    256,
+  );
+  return bytesToHex(new Uint8Array(derivedBits));
+}
+
+async function createMockPasswordCredential(
+  password: string,
+  salt = globalThis.crypto.getRandomValues(new Uint8Array(MOCK_PASSWORD_SALT_BYTES)),
+): Promise<Pick<MockAccount, 'passwordHash' | 'passwordSalt'>> {
+  return {
+    passwordHash: await deriveMockPasswordHash(password, salt),
+    passwordSalt: bytesToHex(salt),
+  };
+}
+
+function hashesMatch(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+async function verifyMockPassword(account: MockAccount, password: string): Promise<boolean> {
+  if (
+    typeof account.passwordHash !== 'string'
+    || !/^[a-f0-9]{64}$/i.test(account.passwordHash)
+    || typeof account.passwordSalt !== 'string'
+    || !/^[a-f0-9]{32}$/i.test(account.passwordSalt)
+  ) {
+    return false;
+  }
+  const actualHash = await deriveMockPasswordHash(password, hexToBytes(account.passwordSalt));
+  return hashesMatch(actualHash, account.passwordHash.toLowerCase());
+}
+
 function toPublicUser(account: MockAccount): AuthUser {
-  const { password: _password, dateOfBirth: _dateOfBirth, ...publicUser } = account;
+  const {
+    password: _password,
+    passwordHash: _passwordHash,
+    passwordSalt: _passwordSalt,
+    dateOfBirth: _dateOfBirth,
+    ...publicUser
+  } = account;
   return publicUser;
 }
 
@@ -187,11 +266,15 @@ const mockApi = {
     password: string,
     role: UserRole,
   ): Promise<AuthResult & { user?: AuthUser }> {
+    if (!secureMockAuthAvailable()) {
+      return delay({ success: false, error: 'Secure local account storage is unavailable in this browser.' });
+    }
     const accounts = readAccounts();
     const normalizedEmail = email.trim().toLowerCase();
     if (accounts.some((a) => a.email.toLowerCase() === normalizedEmail)) {
       return delay({ success: false, error: 'An account with that email already exists.' });
     }
+    const passwordCredential = await createMockPasswordCredential(password);
     const account: MockAccount = {
       id: `usr_${Date.now().toString(36)}`,
       name: name.trim(),
@@ -199,17 +282,29 @@ const mockApi = {
       username: usernameFromEmail(normalizedEmail),
       role,
       createdAt: new Date().toISOString(),
-      password,
+      ...passwordCredential,
     };
     writeAccounts([...accounts, account]);
     return delay({ success: true, user: toPublicUser(account) });
   },
   async login(email: string, password: string): Promise<AuthResult & { user?: AuthUser }> {
+    if (!secureMockAuthAvailable()) {
+      return delay({ success: false, error: 'Secure local sign-in is unavailable in this browser.' });
+    }
     const accounts = readAccounts();
     const normalizedEmail = email.trim().toLowerCase();
     const account = accounts.find((a) => a.email.toLowerCase() === normalizedEmail);
     if (!account) return delay({ success: false, error: 'No account found with that email.' });
-    if (account.password !== password) return delay({ success: false, error: 'Incorrect password. Try again.' });
+    if (typeof account.password === 'string') {
+      if (account.password !== password) return delay({ success: false, error: 'Incorrect password. Try again.' });
+      const passwordCredential = await createMockPasswordCredential(password);
+      const migratedAccount: MockAccount = { ...account, ...passwordCredential, password: undefined };
+      writeAccounts(accounts.map((candidate) => candidate.id === account.id ? migratedAccount : candidate));
+      return delay({ success: true, user: toPublicUser(migratedAccount) });
+    }
+    if (!await verifyMockPassword(account, password)) {
+      return delay({ success: false, error: 'Incorrect password. Try again.' });
+    }
     return delay({ success: true, user: toPublicUser(account) });
   },
   async requestPasswordReset(email: string): Promise<AuthResult> {
@@ -240,6 +335,8 @@ interface AuthContextValue {
   startGoogleSignIn: (role?: UserRole) => Promise<AuthResult>;
   completeGoogleSignIn: (intent?: GoogleSignupIntent) => Promise<AuthResult & { destination?: AuthenticatedDestination }>;
   changeEmail: (email: string) => Promise<AuthResult>;
+  deactivateAccount: () => Promise<AuthResult & { warning?: string }>;
+  requestAccountDeletion: () => Promise<AuthResult>;
   requestPasswordReset: (email: string) => Promise<AuthResult>;
   passwordRecoverySession: boolean;
   clearPasswordRecoverySession: () => void;
@@ -256,6 +353,25 @@ type SupabaseAuthUser = {
   created_at?: string;
   user_metadata?: Record<string, unknown>;
 };
+
+class DeactivatedAccountError extends Error {
+  constructor() {
+    super('This account is deactivated. Contact support to request reactivation.');
+    this.name = 'DeactivatedAccountError';
+  }
+}
+
+async function revokeInactiveSession(): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.auth.signOut({ scope: 'global' });
+  if (!error) return;
+
+  console.error('ArtGuard: could not revoke all sessions for a deactivated account.', error);
+  const { error: localError } = await supabase.auth.signOut({ scope: 'local' });
+  if (localError) {
+    console.error('ArtGuard: could not clear the local session for a deactivated account.', localError);
+  }
+}
 
 function authUserFromMetadata(authUser: SupabaseAuthUser): AuthUser {
   const metadataName = authUser.user_metadata?.full_name ?? authUser.user_metadata?.name;
@@ -274,6 +390,12 @@ function authUserFromMetadata(authUser: SupabaseAuthUser): AuthUser {
 }
 
 async function publicUserFromSession(authUser: SupabaseAuthUser): Promise<AuthUser> {
+  if (supabase) {
+    const { data: isActive, error } = await supabase.rpc('is_my_account_active');
+    if (error) throw error;
+    if (isActive !== true) throw new DeactivatedAccountError();
+  }
+
   const fallback = authUserFromMetadata(authUser);
   let profile = null;
   try {
@@ -434,6 +556,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }).catch((error) => {
           if (active && revision === authStateRevision.current) {
+            if (error instanceof DeactivatedAccountError) {
+              setUser(null);
+              setPasswordRecoverySession(false);
+              void revokeInactiveSession().catch((signOutError) => {
+                console.error('ArtGuard: failed to sign out a deactivated account.', signOutError);
+              });
+            }
             if (event === 'INITIAL_SESSION') {
               setInitializing(false);
               logAuthInteractionDiagnostic('auth.initialization.failed', {
@@ -503,6 +632,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       persistSession(fallbackUser);
       return { success: true };
     } catch (error) {
+      if (error instanceof DeactivatedAccountError) {
+        try {
+          await revokeInactiveSession();
+        } catch (signOutError) {
+          console.error('ArtGuard: failed to sign out a deactivated account.', signOutError);
+        }
+        return { success: false, error: error.message };
+      }
       logAuthRequestFailure('login', error);
       return { success: false, error: getAuthErrorMessage(error, 'login') };
     }
@@ -1015,6 +1152,77 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { success: result.success, error: result.error };
   }, [persistSession, user]);
 
+  const deactivateAccount = useCallback(async () => {
+    if (!user) return { success: false, error: 'Not signed in.' };
+    if (!isSupabaseConfigured || !supabase) {
+      return {
+        success: false,
+        error: 'Account deactivation requires a verified Supabase backend. Demo mode made no changes.',
+      };
+    }
+
+    try {
+      const { error } = await supabase.rpc('deactivate_my_account');
+      if (error) return { success: false, error: error.message };
+
+      let warning: string | undefined;
+      try {
+        const { error: signOutError } = await supabase.auth.signOut({ scope: 'global' });
+        if (signOutError) {
+          warning = 'Your account is deactivated, but other active sessions could not be revoked. Database access is blocked; contact support if this persists.';
+          const { error: localSignOutError } = await supabase.auth.signOut({ scope: 'local' });
+          if (localSignOutError) {
+            warning = 'Your account is deactivated, but this browser session could not be fully cleared. Close this browser and contact support.';
+          }
+        }
+      } catch (signOutError) {
+        console.error('ArtGuard: global session revocation failed after deactivation.', signOutError);
+        warning = 'Your account is deactivated, but session revocation could not be confirmed. Database access is blocked; contact support if this persists.';
+        try {
+          const { error: localSignOutError } = await supabase.auth.signOut({ scope: 'local' });
+          if (localSignOutError) {
+            warning = 'Your account is deactivated, but this browser session could not be fully cleared. Close this browser and contact support.';
+          }
+        } catch (localSignOutError) {
+          console.error('ArtGuard: local session cleanup failed after deactivation.', localSignOutError);
+          warning = 'Your account is deactivated, but this browser session could not be fully cleared. Close this browser and contact support.';
+        }
+      }
+
+      authStateRevision.current += 1;
+      clearPasswordRecoverySession();
+      persistSession(null);
+      return { success: true, warning };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unable to deactivate this account.',
+      };
+    }
+  }, [clearPasswordRecoverySession, persistSession, user]);
+
+  const requestAccountDeletion = useCallback(async () => {
+    if (!user) return { success: false, error: 'Not signed in.' };
+    if (!isSupabaseConfigured || !supabase) {
+      return {
+        success: false,
+        error: 'Deletion requests require a verified Supabase backend. Demo mode made no changes.',
+      };
+    }
+
+    try {
+      const { error } = await supabase.rpc('request_my_account_deletion');
+      return error
+        ? { success: false, error: error.message }
+        : { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unable to submit a deletion request.',
+      };
+    }
+  }, [user]);
+
   const logout = useCallback(() => {
     authStateRevision.current += 1;
     clearPasswordRecoverySession();
@@ -1035,6 +1243,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       startGoogleSignIn,
       completeGoogleSignIn,
       changeEmail,
+      deactivateAccount,
+      requestAccountDeletion,
       requestPasswordReset,
       passwordRecoverySession,
       clearPasswordRecoverySession,
@@ -1042,7 +1252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       enableMockPremium,
       logout,
     }),
-    [user, initializing, login, signUp, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
+    [user, initializing, login, signUp, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
