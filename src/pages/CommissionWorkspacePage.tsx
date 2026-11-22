@@ -21,7 +21,7 @@ import { listArtistReviews, submitArtistReview, updateArtistReview, type ArtistR
 import { approveCommissionDeliverable, createCommissionDeliverableSignedUrl, listCommissionDeliverables, uploadCommissionDeliverable, type CommissionDeliverable } from '../lib/supabaseDeliverables';
 import { approveCommissionMilestone, createDefaultCommissionMilestones, listCommissionMilestones, startCommissionMilestone, submitCommissionMilestone, type CommissionMilestone } from '../lib/supabaseMilestones';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
-import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentFailure, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
+import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -62,7 +62,7 @@ function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; c
   const record = typeof error === 'object' && error !== null
     ? error as { code?: unknown; message?: unknown }
     : null;
-  const code = typeof record?.code === 'string' && /^[A-Z0-9]{5}$/.test(record.code)
+  const code = typeof record?.code === 'string' && /^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(record.code)
     ? record.code
     : undefined;
   const message = typeof record?.message === 'string'
@@ -88,6 +88,44 @@ function getDemoPaymentFailureDiagnostics(error: unknown): { category: string; c
   else if (code?.startsWith('PGRST')) category = 'rpc-or-response-error';
 
   return { category, ...(code ? { code } : {}) };
+}
+
+function sanitizeDemoPaymentErrorMessage(message: string): string {
+  return message
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[redacted-url]')
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]+\b/g, '[redacted-token]')
+    .replace(/\bsb_(?:publishable|secret)_[A-Za-z0-9_-]+\b/gi, '[redacted-key]')
+    .replace(/\b(password|token|key|secret|authorization|amount|payment[_ -]?amount|access[_ -]?token|refresh[_ -]?token|api[_ -]?key|publishable[_ -]?key|provider[_ -]?reference|transaction[_ -]?reference|payment[_ -]?reference)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '[redacted-id]')
+    .replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g, '[redacted-email]')
+    .replace(/(?:[$€£₱]|PHP\s*)\s*\d+(?:\.\d{1,2})?/gi, '[redacted-amount]');
+}
+
+function getDemoPaymentErrorCopy(category: string): string {
+  switch (category) {
+    case 'demo-payments-disabled':
+      return 'Simulated payments are currently disabled. No payment was recorded.';
+    case 'commission-price-unavailable':
+      return 'Payment is unavailable because the agreed commission price is incomplete.';
+    case 'authorization-rejected':
+    case 'permission-denied':
+      return 'This account could not authorize the payment. Refresh the page and try again.';
+    case 'payment-record-not-found':
+      return 'The pending payment could not be found. Refresh the payment status and try again.';
+    case 'commission-ineligible':
+      return 'This commission is not currently eligible for payment.';
+    case 'provider-payment-rejected':
+      return 'This payment record cannot be used for simulated payment.';
+    case 'payment-record-mismatch':
+      return 'The payment details no longer match this commission. Refresh before trying again.';
+    case 'payment-state-conflict':
+      return 'The payment has changed and cannot be confirmed. Refresh the payment status.';
+    case 'rpc-or-response-error':
+      return 'The payment service is unavailable in this app environment. Please try again later.';
+    default:
+      return 'Payment was not confirmed. No success receipt was created. Refresh the payment status and try again.';
+  }
 }
 
 function canEditArtistReview(review: Pick<SubmittedArtistReview, 'created_at' | 'edited_at'>, now = Date.now()): boolean {
@@ -720,74 +758,22 @@ export function CommissionWorkspacePage() {
       showToast('Demo payment successful. No real money was charged or transferred.');
     } catch (error) {
       if (activeOrderId.current !== requestedCommissionId) return;
-      const message = typeof error === 'object' && error !== null && 'message' in error
-        && typeof error.message === 'string'
-        ? error.message
-        : error instanceof Error ? error.message : '';
       const diagnostics = getDemoPaymentFailureDiagnostics(error);
-      console.error('ArtGuard: demo payment failed', { stage: failureStage, ...diagnostics });
-      setDemoPaymentDialogStep('confirm');
-      setPaymentError(message.includes('DEMO_PAYMENTS_DISABLED')
-        ? 'Simulated payments are currently unavailable. No payment was recorded.'
-        : message.includes('COMMISSION_PRICE_UNAVAILABLE')
-          ? 'Payment unavailable for this commission.'
-          : 'Could not complete the simulated payment. Please try again.');
-    } finally {
-      paymentActionInFlight.current = false;
-      setPaymentActionLoading(false);
-    }
-  };
-
-  const handleSimulatePaymentFailure = async () => {
-    if (
-      !commissionPayment
-      || !user
-      || !realCommission
-      || orderId !== realCommission.id
-      || user.role !== 'client'
-      || realCommission.status !== 'ACCEPTED'
-      || commissionPayment.commission_id !== realCommission.id
-      || commissionPayment.payer_id !== user.id
-      || commissionPayment.payee_id !== realCommission.artist_id
-      || commissionPayment.amount !== realCommission.amount
-      || commissionPayment.currency !== realCommission.currency
-      || commissionPayment.provider !== null
-      || commissionPayment.provider_reference !== null
-      || commissionPayment.provider_verified_at
-      || commissionPayment.demo_paid_at
-      || commissionPayment.status !== 'PENDING'
-      || paymentActionInFlight.current
-    ) return;
-
-    const requestedCommissionId = realCommission.id;
-    paymentActionInFlight.current = true;
-    setPaymentActionLoading(true);
-    setPaymentError(undefined);
-    try {
-      const failedPayment = await simulateCommissionPaymentFailure(commissionPayment.id);
-      if (activeOrderId.current !== requestedCommissionId) return;
-      if (
-        failedPayment.id !== commissionPayment.id
-        || failedPayment.commission_id !== requestedCommissionId
-        || failedPayment.payer_id !== user.id
-        || failedPayment.payee_id !== realCommission.artist_id
-        || failedPayment.amount !== realCommission.amount
-        || failedPayment.currency !== realCommission.currency
-        || failedPayment.status !== 'FAILED'
-        || failedPayment.provider !== null
-        || failedPayment.provider_reference !== null
-        || failedPayment.provider_verified_at
-        || failedPayment.demo_paid_at
-      ) {
-        throw new Error('The saved failure simulation could not be verified.');
+      if (import.meta.env.DEV) {
+        const errorRecord = typeof error === 'object' && error !== null
+          ? error as { message?: unknown }
+          : null;
+        const originalMessage = typeof errorRecord?.message === 'string'
+          ? errorRecord.message
+          : error instanceof Error ? error.message : '';
+        console.error('ArtGuard: demo payment failed', {
+          stage: failureStage,
+          ...diagnostics,
+          message: sanitizeDemoPaymentErrorMessage(originalMessage),
+        });
       }
-      setCommissionPayment(failedPayment);
-    } catch (error) {
-      if (activeOrderId.current !== requestedCommissionId) return;
-      const message = error instanceof Error ? error.message : '';
-      setPaymentError(message.includes('DEMO_PAYMENTS_DISABLED')
-        ? 'Simulated payments are currently unavailable. No payment state was changed.'
-        : 'Could not update the simulated payment. Please try again.');
+      setDemoPaymentDialogStep('confirm');
+      setPaymentError(getDemoPaymentErrorCopy(diagnostics.category));
     } finally {
       paymentActionInFlight.current = false;
       setPaymentActionLoading(false);
@@ -1036,19 +1022,6 @@ export function CommissionWorkspacePage() {
       && realCommission.amount !== undefined
       && commissionPayment?.amount === realCommission.amount
       && commissionPayment.currency === realCommission.currency;
-    const canSimulatePaymentFailure = canManagePayment
-      && orderId === realCommission.id
-      && realCommission.status === 'ACCEPTED'
-      && paymentStatusKnown
-      && commissionPayment?.commission_id === realCommission.id
-      && commissionPayment.payer_id === user.id
-      && commissionPayment.payee_id === realCommission.artist_id
-      && commissionPayment.status === 'PENDING'
-      && commissionPayment.provider === null
-      && commissionPayment.provider_reference === null
-      && !commissionPayment.provider_verified_at
-      && !commissionPayment.demo_paid_at
-      && paymentAmountMatchesCommission;
     const matchingPaymentRefunded = matchingPaymentParties
       && paymentAmountMatchesCommission
       && commissionPayment.status === 'REFUNDED';
@@ -1358,11 +1331,6 @@ export function CommissionWorkspacePage() {
                     disabled={paymentActionLoading}
                   >
                     Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
-                  </button>
-                )}
-                {canSimulatePaymentFailure && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleSimulatePaymentFailure()} disabled={paymentActionLoading}>
-                    {paymentActionLoading ? 'Updating…' : 'Simulate failure'}
                   </button>
                 )}
                 {canRefundPayment && (
