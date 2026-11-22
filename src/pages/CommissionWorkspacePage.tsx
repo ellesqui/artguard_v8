@@ -687,10 +687,10 @@ export function CommissionWorkspacePage() {
       const message = error instanceof Error ? error.message : '';
       setDemoPaymentDialogStep('confirm');
       setPaymentError(message.includes('DEMO_PAYMENTS_DISABLED')
-        ? 'Demo payments are currently disabled. No payment was recorded.'
+        ? 'Simulated payments are currently unavailable. No payment was recorded.'
         : message.includes('COMMISSION_PRICE_UNAVAILABLE')
           ? 'Payment unavailable for this commission.'
-          : 'Could not complete the demo payment. Please try again.');
+          : 'Could not complete the simulated payment. Please try again.');
     } finally {
       paymentActionInFlight.current = false;
       setPaymentActionLoading(false);
@@ -745,7 +745,7 @@ export function CommissionWorkspacePage() {
       if (activeOrderId.current !== requestedCommissionId) return;
       const message = error instanceof Error ? error.message : '';
       setPaymentError(message.includes('DEMO_PAYMENTS_DISABLED')
-        ? 'Demo payments are currently disabled. No payment state was changed.'
+        ? 'Simulated payments are currently unavailable. No payment state was changed.'
         : 'Could not update the simulated payment. Please try again.');
     } finally {
       paymentActionInFlight.current = false;
@@ -1027,6 +1027,25 @@ export function CommissionWorkspacePage() {
       && (demoPaymentDialogStep === 'receipt'
         ? Boolean(demoPaymentReceipt)
         : canStartDemoPayment || Boolean(paymentError));
+    const paymentCardStatus = commissionPayment?.status === 'PENDING'
+      ? { label: 'Awaiting payment', tone: 'c-warning' }
+      : commissionPayment?.status === 'PAID'
+        ? commissionPayment.demo_paid_at
+          ? { label: 'Paid', tone: 'c-success' }
+          : commissionPayment.provider_verified_at
+            ? { label: 'Paid · provider verified', tone: 'c-success' }
+            : { label: 'Payment status unverified', tone: 'c-warning' }
+        : commissionPayment?.status === 'FAILED'
+          ? { label: 'Payment failed', tone: 'c-danger' }
+          : commissionPayment?.status === 'VOIDED'
+            ? { label: 'Cancelled', tone: 'c-mid' }
+            : commissionPayment?.status === 'REFUNDED'
+              ? { label: 'Refunded', tone: 'c-success' }
+              : realCommission.status === 'ACCEPTED' && paymentAvailable
+                ? { label: 'Awaiting payment', tone: 'c-warning' }
+                : !paymentAvailable
+                  ? { label: 'Payment unavailable', tone: 'c-low' }
+                  : { label: 'Payment status unavailable', tone: 'c-low' };
     const escrowStatus = paymentLoading
       ? 'CHECKING PAYMENT'
       : !paymentStatusKnown
@@ -1260,94 +1279,64 @@ export function CommissionWorkspacePage() {
         </section>
 
         {showPaymentPanel && (
-          <section className="card workspace-payment-card ag-liquid-glass-soft" style={{ marginBottom: 16, padding: '14px 16px' }} aria-label="Demo commission payment">
-            <div className="row-between" style={{ marginBottom: 8 }}>
-              <div className="section-title" style={{ marginBottom: 0 }}>Demo Payment</div>
-              <span className="badge badge-warning">DEMO ONLY</span>
+          <section
+            className="card workspace-payment-card workspace-commission-payment-card ag-liquid-glass-soft"
+            style={{ marginBottom: 16 }}
+            aria-label="Commission payment"
+          >
+            <div className="row-between workspace-payment-card-header">
+              <span className="section-title">Payment</span>
+              <span className="badge badge-warning workspace-payment-chip">SIMULATED</span>
             </div>
-            <div className="t-xs c-low" style={{ marginBottom: 10 }}>
-              This is a simulated payment for demonstration purposes. No real money will be charged or transferred.
+            <div className="workspace-payment-details">
+              <strong>{realCommission.title}</strong>
+              <span>Artist · {realCommission.artist_id === user.id ? user.name || 'You' : realCounterparty?.name ?? 'Artist'}</span>
             </div>
-            {paymentLoading ? (
-              <div className="t-xs c-low" role="status">Loading payment status…</div>
-            ) : (
-              <>
-                <div className="t-xs c-low" style={{ marginBottom: 4 }}>Commission: {realCommission.title}</div>
-                {canManagePayment && (
-                  <div className="t-xs c-low" style={{ marginBottom: 8 }}>Artist: {realCounterparty?.name ?? 'Artist'}</div>
-                )}
-                {paymentAvailable && (
-                  <div className="t-sm c-mid" style={{ marginBottom: 8 }}>
-                    Agreed amount: {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
-                  </div>
-                )}
-                {!paymentAvailable && !commissionPayment && (
-                  <div className="t-xs c-low" style={{ marginBottom: 8 }}>Payment unavailable for this commission.</div>
-                )}
-                {commissionPayment?.status === 'PENDING' && <div className="t-sm c-warning">Status: Awaiting Demo Payment</div>}
-                {commissionPayment?.status === 'PAID' && (
-                  <div className={`t-sm ${commissionPayment.demo_paid_at ? 'c-success' : commissionPayment.provider_verified_at ? 'c-success' : 'c-warning'}`}>
-                    {commissionPayment.demo_paid_at
-                      ? `Demo Payment Successful · ${formatCommissionDate(commissionPayment.demo_paid_at ?? commissionPayment.paid_at) ?? ''}`
-                      : `Payment: PAID${commissionPayment.provider_verified_at ? ' · PROVIDER VERIFIED' : ' · UNVERIFIED'}`}
-                  </div>
-                )}
-                {commissionPayment?.status === 'FAILED' && <div className="t-sm c-danger">Demo Payment Failed</div>}
-                {commissionPayment?.status === 'VOIDED' && <div className="t-sm c-mid">Demo Payment Cancelled</div>}
-                {commissionPayment?.status === 'REFUNDED' && (
-                  <div>
-                    <div className="t-sm c-success">{commissionPayment.demo_paid_at ? 'Demo Refund' : 'Payment Refunded'}</div>
-                    {commissionPayment.refunded_amount !== null && (
-                      <div className="t-sm c-mid" style={{ marginTop: 4 }}>
-                        {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
-                      </div>
-                    )}
-                    {commissionPayment.refunded_at && <div className="t-xs c-low" style={{ marginTop: 3 }}>Refunded {formatCommissionDate(commissionPayment.refunded_at)}</div>}
-                  </div>
-                )}
-                {!commissionPayment && realCommission.status === 'ACCEPTED' && paymentAvailable && (
-                  <div className="t-sm c-mid">Awaiting Demo Payment</div>
-                )}
+            <div className="mono workspace-payment-amount">
+              {paymentAvailable
+                ? formatDemoAmount(realCommission.amount!, realCommission.currency!)
+                : 'Unavailable'}
+            </div>
+            <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
+              {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
+            </div>
+            {!paymentLoading && commissionPayment?.status === 'REFUNDED' && commissionPayment.refunded_amount !== null && (
+              <div className="workspace-payment-refund">
+                {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
+                {commissionPayment.refunded_at && ` · ${formatCommissionDate(commissionPayment.refunded_at)}`}
+              </div>
+            )}
+            {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
+            {!paymentLoading && (
+              <div className="workspace-payment-actions">
                 {canStartDemoPayment && (
                   <button
                     type="button"
-                    className="btn btn-primary btn-sm"
-                    style={{ marginTop: 10 }}
+                    className="btn btn-primary btn-sm workspace-payment-pay-button"
                     onClick={openDemoPaymentConfirmation}
                     disabled={paymentActionLoading}
                   >
-                    Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)} (Demo)
+                    Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
                   </button>
                 )}
                 {canSimulatePaymentFailure && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleSimulatePaymentFailure()} disabled={paymentActionLoading}>
-                      {paymentActionLoading ? 'Updating…' : 'Simulate Demo Payment Failure'}
-                    </button>
-                  </div>
-                )}
-                {paymentError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>{paymentError}</div>}
-                {requiresPaidPaymentBeforeStart && (
-                  <div className="t-xs c-low" style={{ marginTop: 8 }}>
-                    A successful demo simulation can unlock the school-project workflow only. It does not represent provider verification or a real payment.
-                  </div>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleSimulatePaymentFailure()} disabled={paymentActionLoading}>
+                    {paymentActionLoading ? 'Updating…' : 'Simulate failure'}
+                  </button>
                 )}
                 {canRefundPayment && (
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm"
-                    style={{ marginTop: 10 }}
+                    className="btn btn-ghost btn-sm"
                     onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
                     disabled={refundSubmitting || paymentActionLoading}
                   >
-                    Refund Payment
+                    Refund payment
                   </button>
                 )}
-                {canManagePayment && commissionPayment?.status === 'REFUNDED' && (
-                  <div className="t-xs c-low" style={{ marginTop: 8 }}>DEMO ONLY — no real money movement occurred. Refunded amounts are excluded from demo earnings.</div>
-                )}
-              </>
+              </div>
             )}
+            <p className="workspace-payment-disclosure">Simulated transaction. No real money is transferred.</p>
           </section>
         )}
 

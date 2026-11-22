@@ -86,6 +86,86 @@
   border-top: 2px solid var(--ag-primary);
 }
 
+.workspace-commission-payment-card {
+  padding: 14px 16px !important;
+}
+
+.workspace-payment-card-header {
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.workspace-payment-card-header .section-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.workspace-payment-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.workspace-payment-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+  margin-bottom: 7px;
+}
+
+.workspace-payment-details strong {
+  min-width: 0;
+  color: var(--ag-text-hi);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-payment-details span {
+  color: var(--ag-text-low);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-payment-amount {
+  margin-bottom: 3px;
+  color: var(--ag-text-hi);
+  font-size: clamp(24px, 6vw, 30px);
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.workspace-payment-status {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workspace-payment-refund {
+  margin: -4px 0 8px;
+  color: var(--ag-text-low);
+  font-size: 11px;
+}
+
+.workspace-payment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-payment-pay-button {
+  flex: 1 1 160px;
+}
+
+.workspace-payment-disclosure {
+  margin: 9px 0 0;
+  color: var(--ag-text-low);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .workspace-escrow-card {
   margin-bottom: 16px;
   border-left: 3px solid var(--ag-primary);
@@ -404,6 +484,14 @@
 
   .workspace-summary-details {
     gap: 8px !important;
+  }
+
+  .workspace-commission-payment-card {
+    padding: 12px 14px !important;
+  }
+
+  .workspace-payment-pay-button {
+    flex-basis: 100%;
   }
 
   .workspace-demo-payment-receipt {
