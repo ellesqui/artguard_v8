@@ -29,26 +29,58 @@ function formatProviderName(provider: string): string {
   return provider.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function getPasswordUpdateError(code: string | undefined, message: string): string {
-  const normalizedMessage = message.toLowerCase();
-  if (code === 'reauthentication_not_valid' || code === 'otp_expired') {
+function getPasswordUpdateError(error: unknown, operation: 'update' | 'reauthenticate'): string {
+  const errorName = error instanceof Error ? error.name : '';
+  const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+  const errorCode = error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined;
+  const errorStatus = error instanceof Error && 'status' in error && typeof error.status === 'number'
+    ? error.status
+    : undefined;
+
+  if (errorCode === 'reauthentication_not_valid' || errorCode === 'otp_expired') {
     return 'That verification code is invalid or expired. Check the code or request a new one.';
   }
-  if (code === 'over_email_send_rate_limit' || code === 'over_request_rate_limit') {
-    return 'Too many verification attempts. Wait a little while before trying again.';
+  if (errorCode === 'session_not_found'
+    || errorCode === 'session_expired'
+    || errorCode === 'refresh_token_not_found'
+    || errorCode === 'invalid_grant'
+    || errorName === 'AuthSessionMissingError'
+    || errorMessage.includes('session has expired')) {
+    return 'Your session has expired. Sign in again, then retry the password update.';
   }
-  if (code === 'weak_password') {
+  if (errorCode === 'over_email_send_rate_limit' || errorCode === 'over_request_rate_limit') {
+    return operation === 'reauthenticate'
+      ? 'Supabase is rate-limiting verification emails. Wait before requesting another code.'
+      : 'Too many password update attempts. Wait a little while before trying again.';
+  }
+  if (operation === 'update'
+    && (errorCode === 'weak_password' || errorCode === 'validation_failed' || errorStatus === 422)) {
     return 'Supabase rejected this password. Choose a password that meets your project’s password requirements.';
   }
-  if (
-    code === 'current_password_required'
-    || normalizedMessage.includes('current password is required')
-    || normalizedMessage.includes('requires current password')
-  ) {
-    return 'This project requires the current password to change credentials. This Google-only account has no current password to provide; contact your administrator for the supported recovery path.';
+  if (operation === 'update' && (
+    errorCode === 'current_password_required'
+    || errorMessage.includes('current password is required')
+    || errorMessage.includes('requires current password')
+  )) {
+    return 'Supabase requires the current password for this update. This form cannot bypass that requirement.';
   }
-  if (code === 'reauthentication_needed') {
-    return 'Recent verification is required. Try again to request a verification code.';
+  if (operation === 'update' && errorCode === 'same_password') {
+    return 'Choose a password that is different from your current password.';
+  }
+  if (
+    errorName === 'AuthRetryableFetchError'
+    || errorName === 'TypeError'
+    || errorStatus === 0
+    || (errorStatus !== undefined && errorStatus >= 500)
+  ) {
+    return operation === 'reauthenticate'
+      ? 'Could not connect to Supabase to send a verification code. Check your connection and try again.'
+      : 'Could not connect to Supabase to update your password. Check your connection and try again.';
+  }
+  if (operation === 'reauthenticate') {
+    return 'Supabase could not send the verification code. Please try again later.';
   }
   return 'Could not update the password. Please try again.';
 }
@@ -57,8 +89,7 @@ function getPasswordUpdateError(code: string | undefined, message: string): stri
  * Privacy & Security settings.
  *
  * Only surfaces controls that are actually backed by something real:
- *  - Password actions use Supabase Auth identities; existing email sign-in
- *    accounts reuse the current password-reset flow.
+ *  - Password actions use the authenticated Supabase Auth session.
  *  - "Where your data lives" reads the app's real `backendMode` so it
  *    never claims data is synced when it's only stored locally, or
  *    vice versa.
@@ -68,10 +99,9 @@ function getPasswordUpdateError(code: string | undefined, message: string): stri
  */
 export function PrivacySecurityPage() {
   const navigate = useNavigate();
-  const { user, backendMode, requestPasswordReset } = useAuth();
+  const { user, backendMode } = useAuth();
   const { toast, showToast } = useMockToast();
-  const [sendingReset, setSendingReset] = useState(false);
-  const [resetError, setResetError] = useState<string>();
+  const [securityError, setSecurityError] = useState<string>();
   const [identityRefresh, setIdentityRefresh] = useState(0);
   const [signInMethods, setSignInMethods] = useState<AccountSignInMethods>({ status: 'loading' });
   const [setPasswordOpen, setSetPasswordOpen] = useState(false);
@@ -137,24 +167,6 @@ export function PrivacySecurityPage() {
     return () => { active = false; };
   }, [backendMode, identityRefresh, user?.id]);
 
-  const handleChangePassword = async () => {
-    if (signInMethods.status !== 'ready' || !signInMethods.email || sendingReset) return;
-    setResetError(undefined);
-    setSendingReset(true);
-    try {
-      const result = await requestPasswordReset(signInMethods.email);
-      if (result.success) {
-        showToast(`Password reset email requested for ${signInMethods.email}. Check your inbox and spam folder.`);
-      } else {
-        setResetError(result.error ?? 'Could not send a password reset link. Please try again.');
-      }
-    } catch {
-      setResetError('Could not send a password reset link. Please try again.');
-    } finally {
-      setSendingReset(false);
-    }
-  };
-
   const clearSetPasswordForm = () => {
     setNewPassword('');
     setConfirmNewPassword('');
@@ -178,15 +190,11 @@ export function PrivacySecurityPage() {
       return;
     }
     if (signInMethods.status !== 'ready') return;
-    if (signInMethods.hasEmailPassword) {
-      void handleChangePassword();
+    if (!signInMethods.hasEmailPassword && !signInMethods.providers.includes('google')) {
+      setSecurityError('Could not verify a supported sign-in method for this account.');
       return;
     }
-    if (!signInMethods.providers.includes('google')) {
-      setResetError('Could not verify a supported sign-in method for this account.');
-      return;
-    }
-    setResetError(undefined);
+    setSecurityError(undefined);
     clearSetPasswordForm();
     setSetPasswordOpen(true);
   };
@@ -201,15 +209,15 @@ export function PrivacySecurityPage() {
     try {
       const { error } = await supabase.auth.reauthenticate();
       if (error) {
-        setPasswordError(getPasswordUpdateError(error.code, error.message));
+        setPasswordError(getPasswordUpdateError(error, 'reauthenticate'));
         return false;
       }
       setReauthRequired(true);
-      setReauthMessage(`A verification code was sent to ${signInMethods.status === 'ready' ? signInMethods.email : 'your registered email'}.`);
+      setReauthMessage('Enter the verification code sent to your verified contact method to authorize this password update.');
       setPasswordError(undefined);
       return true;
-    } catch {
-      setPasswordError('Could not send a verification code. Please try again.');
+    } catch (error) {
+      setPasswordError(getPasswordUpdateError(error, 'reauthenticate'));
       return false;
     } finally {
       setSendingReauthCode(false);
@@ -244,7 +252,7 @@ export function PrivacySecurityPage() {
         if (error.code === 'reauthentication_needed' && !reauthRequired) {
           await requestPasswordReauthentication();
         } else {
-          setPasswordError(getPasswordUpdateError(error.code, error.message));
+          setPasswordError(getPasswordUpdateError(error, 'update'));
         }
         return;
       }
@@ -253,18 +261,15 @@ export function PrivacySecurityPage() {
         return;
       }
 
-      const providers = [...new Set([...signInMethods.providers, 'email'])].sort();
-      setSignInMethods({
-        status: 'ready',
-        email: signInMethods.email,
-        providers,
-        hasEmailPassword: true,
-      });
       setSetPasswordOpen(false);
       clearSetPasswordForm();
-      showToast('Password successfully added. You can now sign in using your email and password on other devices.');
-    } catch {
-      setPasswordError('Could not update the password. Please try again.');
+      setSignInMethods({ status: 'loading' });
+      setIdentityRefresh((current) => current + 1);
+      showToast(signInMethods.hasEmailPassword
+        ? 'Password updated successfully.'
+        : 'Password successfully added. You can now sign in using your email and password.');
+    } catch (error) {
+      setPasswordError(getPasswordUpdateError(error, 'update'));
     } finally {
       setSavingPassword(false);
     }
@@ -286,15 +291,13 @@ export function PrivacySecurityPage() {
       <div className="row-between" style={{ marginBottom: 10 }}>
         <span className="section-title">Account Security</span>
       </div>
-      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+      <div className="card privacy-security-account-card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
         <SettingsRow
           icon="lock"
           label={signInMethods.status === 'ready'
             ? signInMethods.hasEmailPassword ? 'Change Password' : 'Set Password'
             : signInMethods.status === 'loading' ? 'Checking sign-in methods…' : 'Password'}
-          sublabel={sendingReset
-            ? 'Sending reset link…'
-            : signInMethods.status === 'ready'
+          sublabel={signInMethods.status === 'ready'
               ? signInMethods.hasEmailPassword
                 ? 'Update your email sign-in password'
                 : 'Add email and password sign-in for your account'
@@ -309,7 +312,7 @@ export function PrivacySecurityPage() {
           </div>
         )}
       </div>
-      {resetError && <div className="t-xs c-danger" role="alert" style={{ marginBottom: 20 }}>{resetError}</div>}
+      {securityError && <div className="t-xs c-danger" role="alert" style={{ marginBottom: 20 }}>{securityError}</div>}
 
       <div className="row-between" style={{ marginBottom: 10 }}>
         <span className="section-title">Data</span>
@@ -339,8 +342,10 @@ export function PrivacySecurityPage() {
             aria-labelledby="set-password-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <h2 id="set-password-title">Set Your Password</h2>
-            <p>Create a password so you can sign in with your email on any device, without needing Google sign-in.</p>
+            <h2 id="set-password-title">{signInMethods.hasEmailPassword ? 'Change Your Password' : 'Set Your Password'}</h2>
+            <p>{signInMethods.hasEmailPassword
+              ? 'Enter a new password for your email sign-in.'
+              : 'Create a password so you can sign in with your email on any device, without needing Google sign-in.'}</p>
             <div className="privacy-set-password-email">
               <span className="t-xs c-low">Account email</span>
               <strong>{signInMethods.email}</strong>
@@ -422,7 +427,7 @@ export function PrivacySecurityPage() {
                   loading={savingPassword}
                   disabled={savingPassword || sendingReauthCode}
                 >
-                  Set Password
+                  {signInMethods.hasEmailPassword ? 'Change Password' : 'Set Password'}
                 </AuthButton>
               </div>
             </form>
