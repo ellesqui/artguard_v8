@@ -318,9 +318,11 @@ const mockApi = {
     }
     return delay({ success: true, user: toPublicUser(account) });
   },
-  async requestPasswordReset(email: string): Promise<AuthResult> {
-    void readAccounts().some((a) => a.email.toLowerCase() === email.trim().toLowerCase());
-    return delay({ success: true });
+  async requestPasswordReset(_email: string): Promise<AuthResult> {
+    return delay({
+      success: false,
+      error: 'Password reset emails are unavailable in demo mode. Connect to Supabase to request a real reset email.',
+    });
   },
   async updateProfile(userId: string, patch: Partial<AuthUser>): Promise<AuthResult & { user?: AuthUser }> {
     const accounts = readAccounts();
@@ -1285,8 +1287,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const requestPasswordReset = useCallback(async (email: string) => {
     if (!isSupabaseConfigured || !supabase) return mockApi.requestPasswordReset(email);
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/reset-password` });
-    return error ? { success: false, error: error.message } : { success: true };
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      return error
+        ? { success: false, error: 'Could not request a password reset email. Please try again later.' }
+        : { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof TypeError && /fetch|network/i.test(error.message)
+          ? 'Unable to connect to the password reset service. Check your connection and try again.'
+          : 'Could not request a password reset email. Please try again later.',
+      };
+    }
   }, []);
 
   const clearPasswordRecoverySession = useCallback(() => {

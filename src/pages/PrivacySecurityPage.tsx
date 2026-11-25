@@ -32,7 +32,7 @@ export function PrivacySecurityPage() {
     setSendingReset(true);
     const result = await requestPasswordReset(user.email);
     setSendingReset(false);
-    if (result.success) showToast(`Password reset link sent to ${user.email}`);
+    if (result.success) showToast(`Password reset email requested for ${user.email}. Check your inbox and spam folder.`);
     else setResetError(result.error ?? 'Could not send a password reset link. Please try again.');
   };
 

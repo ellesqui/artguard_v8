@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useIonViewWillEnter } from '@ionic/react';
 import { AuthShell } from '../components/auth/AuthShell';
 import { AuthInput } from '../components/auth/AuthInput';
 import { AuthButton } from '../components/auth/AuthButton';
@@ -16,21 +17,38 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const requestId = useRef(0);
+
+  useIonViewWillEnter(useCallback(() => {
+    requestId.current += 1;
+    setSent(false);
+    setError(undefined);
+    setSubmitting(false);
+  }, []));
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     const validation = validateEmailField(email);
     setError(validation);
     if (validation) return;
 
     setSubmitting(true);
-    const result = await requestPasswordReset(email);
-    setSubmitting(false);
-    if (!result.success) {
-      setError(result.error ?? 'Could not send a reset link. Please try again.');
-      return;
+    const activeRequestId = ++requestId.current;
+    try {
+      const result = await requestPasswordReset(email);
+      if (requestId.current !== activeRequestId) return;
+      if (!result.success) {
+        setError(result.error ?? 'Could not request a reset link. Please try again.');
+        return;
+      }
+      setSent(true);
+    } catch {
+      if (requestId.current !== activeRequestId) return;
+      setError('Unable to request a reset link right now. Check your connection and try again.');
+    } finally {
+      if (requestId.current === activeRequestId) setSubmitting(false);
     }
-    setSent(true);
   };
 
   return (
@@ -43,14 +61,19 @@ export function ForgotPasswordPage() {
     >
       {sent ? (
         <>
-          <div className="auth-banner success">
+          <div className="auth-banner success" role="status">
             <Icon name="check-circle" style={{ stroke: 'var(--ag-success)' }} />
             <span>
-              If an account exists for <strong>{email}</strong>, we&apos;ve sent instructions to reset your
-              password.
+              If an account exists for <strong>{email}</strong>, the reset request was accepted. Check your inbox
+              and spam folder; email delivery may take a few minutes.
             </span>
           </div>
-          <AuthButton onClick={() => navigate('/login')}>Back to Login</AuthButton>
+          <AuthButton onClick={() => setSent(false)}>Use another email or resend</AuthButton>
+          <p className="t-xs c-low auth-footnote">
+            <button type="button" className="auth-link-btn t-xs" onClick={() => navigate('/login')}>
+              Back to Login
+            </button>
+          </p>
         </>
       ) : (
         <form onSubmit={handleSubmit} noValidate>
