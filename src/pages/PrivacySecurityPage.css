@@ -1,0 +1,65 @@
+.privacy-security-sign-in-methods {
+  padding: 0 16px 14px 60px;
+  color: var(--ag-text-low);
+  font-size: 11px;
+}
+
+.privacy-set-password-dialog {
+  border: 1px solid var(--ag-border);
+  background: var(--ag-surface);
+  color: var(--ag-text-hi);
+  box-shadow: var(--ag-shadow-glow);
+}
+
+.privacy-set-password-email {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 14px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: var(--ag-r-sm);
+  background: var(--ag-surface-2);
+}
+
+.privacy-set-password-email strong {
+  color: var(--ag-text-hi);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.privacy-password-strength {
+  margin: -8px 0 14px;
+  color: var(--ag-text-low);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.privacy-password-strength.is-strong {
+  color: var(--ag-success);
+}
+
+.privacy-password-strength.is-medium {
+  color: var(--ag-warning);
+}
+
+.privacy-password-strength.is-weak {
+  color: var(--ag-danger);
+}
+
+.privacy-password-reauth-note {
+  margin: 0 0 14px;
+  color: var(--ag-text-mid);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.privacy-set-password-error {
+  margin: 12px 0 0;
+}
+
+@media (max-width: 520px) {
+  .privacy-security-sign-in-methods {
+    padding-left: 60px;
+  }
+}
