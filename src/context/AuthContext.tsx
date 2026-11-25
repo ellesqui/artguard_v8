@@ -770,7 +770,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return {
           success: true,
           confirmationRequired: true,
-          error: 'Your sign-up request was accepted. Confirm your email before signing in; check your inbox and spam folder.',
         };
       }
       if (!data.user) {
@@ -935,18 +934,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logAuthRequestFailure('signup', error);
         return {
           success: false,
-          error: 'Could not request another confirmation email. Wait a little and try again, or contact support.',
+          error: "Couldn't resend confirmation. Try again shortly.",
         };
       }
       return {
         success: true,
-        error: 'The confirmation email request was accepted. Delivery is not confirmed; check your inbox and spam folder.',
+        error: "Request accepted; email delivery isn't guaranteed.",
       };
     } catch (error) {
       logAuthRequestFailure('signup', error);
       return {
         success: false,
-        error: 'Could not request another confirmation email. Check your connection and try again.',
+        error: 'Connection issue. Try again.',
       };
     }
   }, []);

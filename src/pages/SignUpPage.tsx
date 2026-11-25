@@ -90,7 +90,7 @@ export function SignUpPage() {
     if (result.confirmationRequired) {
       if (!result.success) logAuthInteractionDiagnostic('signup.failed', { success: false });
       setConfirmationEmail(email.trim());
-      setConfirmationMessage(result.success ? result.error : undefined);
+      setConfirmationMessage(undefined);
       setFormError(result.success ? undefined : result.error);
       return;
     }
@@ -113,10 +113,10 @@ export function SignUpPage() {
     try {
       const result = await resendSignupConfirmation(confirmationEmail);
       setConfirmationMessage(result.error ?? (result.success
-        ? 'The confirmation email request was accepted. Delivery is not confirmed; check your inbox and spam folder.'
-        : 'Could not request another confirmation email. Please try again.'));
+        ? "Request accepted; email delivery isn't guaranteed."
+        : "Couldn't resend confirmation. Try again shortly."));
     } catch {
-      setConfirmationMessage('Could not request another confirmation email. Check your connection and try again.');
+      setConfirmationMessage('Connection issue. Try again.');
     } finally {
       setResendingConfirmation(false);
     }
@@ -137,22 +137,20 @@ export function SignUpPage() {
         </div>
       )}
       {confirmationEmail && (
-        <div className="auth-banner" role="status" style={{ marginBottom: 16 }}>
-          <span>
-            Confirmation for <strong>{confirmationEmail}</strong> may still be pending. Requesting another email
-            will not create or change an account.
-          </span>
+        <div className="auth-banner signup-confirmation" role="status">
+          <p className="signup-confirmation-copy">
+            Confirm <strong>{confirmationEmail}</strong> to continue.
+          </p>
           <AuthButton
             type="button"
             loading={resendingConfirmation}
             disabled={resendingConfirmation}
             onClick={() => void handleResendConfirmation()}
-            style={{ marginTop: 12 }}
           >
-            Resend Confirmation Email
+            Resend confirmation
           </AuthButton>
           {confirmationMessage && (
-            <span style={{ display: 'block', marginTop: 10 }} aria-live="polite">
+            <span className="signup-confirmation-feedback" aria-live="polite">
               {confirmationMessage}
             </span>
           )}
