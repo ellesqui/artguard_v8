@@ -49,23 +49,45 @@
   overflow-wrap: anywhere;
 }
 
-.privacy-password-strength {
-  margin: -8px 0 14px;
-  color: var(--ag-text-low);
-  font-size: 11px;
-  text-transform: capitalize;
+.privacy-password-method-options {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
 }
 
-.privacy-password-strength.is-strong {
-  color: var(--ag-success);
+.privacy-password-method-option {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: var(--ag-r-sm);
+  background: var(--ag-surface-2);
+  color: var(--ag-text-hi);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
 }
 
-.privacy-password-strength.is-medium {
-  color: var(--ag-warning);
+.privacy-password-method-option strong {
+  font-size: 13px;
 }
 
-.privacy-password-strength.is-weak {
-  color: var(--ag-danger);
+.privacy-password-method-option span {
+  color: var(--ag-text-mid);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.privacy-password-method-option[aria-pressed='true'] {
+  border-color: var(--ag-primary);
+  background: color-mix(in srgb, var(--ag-primary) 10%, var(--ag-surface-2));
+}
+
+.privacy-password-method-option:focus-visible {
+  outline: 2px solid var(--ag-primary);
+  outline-offset: 2px;
 }
 
 .privacy-password-reauth-note {
