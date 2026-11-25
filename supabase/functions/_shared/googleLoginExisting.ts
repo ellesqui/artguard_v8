@@ -164,13 +164,28 @@ async function findExistingGoogleUser(
 
       const user = specificUserResult.data.user;
       if (!user) continue;
+      if (!user.email_confirmed_at) {
+        console.info('google-login: Matching email is not confirmed.', {
+          stage: 'email_not_confirmed',
+          candidateCount,
+        });
+        continue;
+      }
       const googleIdentities = (user.identities ?? []).filter((identity) => identity.provider === 'google');
-      const matched = googleIdentities.some((identity) => findGoogleIdentity(identity, subject));
-      console.info('google-login: Google identity match result.', {
-        stage: matched ? 'google_identity_match_found' : 'google_identity_match_not_found',
+      const hasConflictingGoogleIdentity = googleIdentities.some(
+        (identity) => !findGoogleIdentity(identity, subject),
+      );
+      const matched = googleIdentities.length === 0
+        ? 'eligible_confirmed_email'
+        : googleIdentities.some((identity) => findGoogleIdentity(identity, subject))
+          ? 'google_identity_match_found'
+          : 'google_identity_conflict';
+      console.info('google-login: Google identity resolution result.', {
+        stage: matched,
         candidateCount,
       });
-      if (matched) return user;
+      if (hasConflictingGoogleIdentity) continue;
+      if (matched === 'eligible_confirmed_email' || matched === 'google_identity_match_found') return user;
     }
 
     if (result.data.users.length < PAGE_SIZE) break;
@@ -358,7 +373,7 @@ export async function handleGoogleLoginExisting(request: Request): Promise<Respo
       return jsonResponse({ error: 'Unable to complete Google sign-in.' }, 500, origin);
     }
     if (!profile || (profile.role !== 'artist' && profile.role !== 'client')) {
-      return jsonResponse({ code: 'account_not_found' }, 404, origin);
+      return jsonResponse({ code: 'profile_not_found' }, 404, origin);
     }
 
     console.info('google-login: Existing Google account verified.', {

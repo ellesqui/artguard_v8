@@ -889,9 +889,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               && typeof failure === 'object'
               && failure !== null
               && 'code' in failure
+              && failure.code === 'profile_not_found'
+            ) {
+              return { success: false, error: 'Your sign-in account exists, but its ArtGuard profile could not be found. Please retry or contact support.' };
+            }
+            if (
+              response.status === 404
+              && typeof failure === 'object'
+              && failure !== null
+              && 'code' in failure
               && failure.code === 'account_not_found'
             ) {
-              return { success: false, error: 'No ArtGuard Hub account was found. Please sign up first.' };
+              return { success: false, error: 'This Google account could not be matched to an existing ArtGuard Hub account in this environment.' };
             }
             if (response.status === 429) {
               const retryAfterSeconds = getRetryAfterSeconds(response) ?? 5;
