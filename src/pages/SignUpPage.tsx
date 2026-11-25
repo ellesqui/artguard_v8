@@ -31,7 +31,7 @@ interface FormErrors {
 
 export function SignUpPage() {
   const navigate = useNavigate();
-  const { signUp, startGoogleSignIn } = useAuth();
+  const { signUp, startGoogleSignIn, resendSignupConfirmation } = useAuth();
 
   const [role, setRole] = useState<UserRole>('artist');
   const [name, setName] = useState('');
@@ -42,6 +42,9 @@ export function SignUpPage() {
   const [submitting, setSubmitting] = useState(false);
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | undefined>();
+  const [confirmationEmail, setConfirmationEmail] = useState('');
+  const [resendingConfirmation, setResendingConfirmation] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState<string>();
   const passwordAssessment = assessPassword(password);
 
   const handleGoogleSignIn = async () => {
@@ -86,12 +89,35 @@ export function SignUpPage() {
 
     if (!result.success) {
       logAuthInteractionDiagnostic('signup.failed', { success: false });
-      setFormError(result.error ?? 'Something went wrong. Please try again.');
+      if (result.confirmationRequired) {
+        setConfirmationEmail(email.trim());
+        setConfirmationMessage(undefined);
+        setFormError(result.error);
+      } else {
+        setConfirmationEmail('');
+        setFormError(result.error ?? 'Something went wrong. Please try again.');
+      }
       return;
     }
     logAuthInteractionDiagnostic('signup.completed', { success: true });
     recordAuthDiagnosticNavigation('/onboarding/name', 'react-router-useNavigate');
     navigate('/onboarding/name', { replace: true });
+  };
+
+  const handleResendConfirmation = async () => {
+    if (resendingConfirmation || !confirmationEmail) return;
+    setResendingConfirmation(true);
+    setConfirmationMessage(undefined);
+    try {
+      const result = await resendSignupConfirmation(confirmationEmail);
+      setConfirmationMessage(result.error ?? (result.success
+        ? 'The confirmation email request was accepted. Delivery is not confirmed; check your inbox and spam folder.'
+        : 'Could not request another confirmation email. Please try again.'));
+    } catch {
+      setConfirmationMessage('Could not request another confirmation email. Check your connection and try again.');
+    } finally {
+      setResendingConfirmation(false);
+    }
   };
 
   return (
@@ -106,6 +132,28 @@ export function SignUpPage() {
         <div className="auth-banner error" role="alert">
           <Icon name="alert" style={{ stroke: 'var(--ag-danger)' }} />
           <span>{formError}</span>
+        </div>
+      )}
+      {confirmationEmail && (
+        <div className="auth-banner" role="status" style={{ marginBottom: 16 }}>
+          <span>
+            Confirmation for <strong>{confirmationEmail}</strong> may still be pending. Requesting another email
+            will not create or change an account.
+          </span>
+          <AuthButton
+            type="button"
+            loading={resendingConfirmation}
+            disabled={resendingConfirmation}
+            onClick={() => void handleResendConfirmation()}
+            style={{ marginTop: 12 }}
+          >
+            Resend Confirmation Email
+          </AuthButton>
+          {confirmationMessage && (
+            <span style={{ display: 'block', marginTop: 10 }} aria-live="polite">
+              {confirmationMessage}
+            </span>
+          )}
         </div>
       )}
 

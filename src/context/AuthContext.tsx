@@ -345,6 +345,7 @@ interface AuthContextValue {
   backendMode: 'supabase' | 'mock';
   login: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string, role: UserRole) => Promise<AuthResult>;
+  resendSignupConfirmation: (email: string) => Promise<AuthResult>;
   completeExistingGoogleLogin: (credential: string) => Promise<AuthResult>;
   completeExistingGoogleEmailLogin: () => Promise<AuthResult & { destination?: AuthenticatedDestination }>;
   startGoogleSignIn: (role?: UserRole) => Promise<AuthResult>;
@@ -741,11 +742,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (error) {
         logAuthRequestFailure('signup', error);
+        const { code } = getAuthErrorMetadata(error);
+        if (['email_exists', 'user_already_exists', 'user_already_registered'].includes(code ?? '')) {
+          return {
+            success: false,
+            confirmationRequired: true,
+            error: 'An account with this email may already exist. If it is awaiting confirmation, request a new confirmation email below.',
+          };
+        }
         return { success: false, error: getAuthErrorMessage(error, 'signup') };
       }
       if (!data.user || !data.session) {
         return {
           success: false,
+          confirmationRequired: true,
           error: "Check your email for confirmation instructions. If you don't receive one, try signing in or resetting your password.",
         };
       }
@@ -783,6 +793,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { success: false, error: getAuthErrorMessage(error, 'signup') };
     }
   }, [persistSession]);
+
+  const resendSignupConfirmation = useCallback(async (email: string): Promise<AuthResult> => {
+    if (!isSupabaseConfigured || !supabase) {
+      return { success: false, error: 'Email confirmation requires a configured Supabase connection.' };
+    }
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      return { success: false, error: 'Enter the email address used to create your account.' };
+    }
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: normalizedEmail,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) {
+        logAuthRequestFailure('signup', error);
+        return {
+          success: false,
+          error: 'Could not request another confirmation email. Wait a little and try again, or contact support.',
+        };
+      }
+      return {
+        success: true,
+        error: 'The confirmation email request was accepted. Delivery is not confirmed; check your inbox and spam folder.',
+      };
+    } catch (error) {
+      logAuthRequestFailure('signup', error);
+      return {
+        success: false,
+        error: 'Could not request another confirmation email. Check your connection and try again.',
+      };
+    }
+  }, []);
 
   const startGoogleSignIn = useCallback(async (role?: UserRole): Promise<AuthResult> => {
     if (!isSupabaseConfigured || !supabase) {
@@ -1470,6 +1515,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       backendMode: isSupabaseConfigured ? 'supabase' : 'mock',
       login,
       signUp,
+      resendSignupConfirmation,
       completeExistingGoogleLogin,
       completeExistingGoogleEmailLogin,
       startGoogleSignIn,
@@ -1484,7 +1530,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       enableMockPremium,
       logout,
     }),
-    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
+    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, resendSignupConfirmation, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
