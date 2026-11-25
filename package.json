@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test:auth-confirmation": "node --experimental-strip-types --test tests/auth-confirmation.test.mjs",
     "test:account-lifecycle": "node --test tests/account-lifecycle-pglite.test.js",
     "preview": "vite preview",
     "cap:sync": "npm run build && npx cap sync",

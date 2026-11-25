@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
-import type { AuthResult, AuthUser, MockAccount, UserRole } from '../types/auth';
+import type {
+  AuthResult,
+  AuthUser,
+  EmailConfirmationOtpType,
+  MockAccount,
+  UserRole,
+} from '../types/auth';
 import { isSupabaseConfigured, supabase, supabaseUrl } from '../lib/supabase';
 import { getMyProfile, ensureMyProfile, usernameFromEmail } from '../lib/supabaseData';
 import { validatePasswordField } from '../utils/validators';
@@ -346,6 +352,11 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<AuthResult>;
   signUp: (name: string, email: string, password: string, role: UserRole) => Promise<AuthResult>;
   resendSignupConfirmation: (email: string) => Promise<AuthResult>;
+  completeEmailConfirmation: (options?: {
+    tokenHash?: string;
+    type?: EmailConfirmationOtpType;
+    verifiedUserId?: string;
+  }) => Promise<AuthResult & { destination?: AuthenticatedDestination; emailConfirmed?: boolean }>;
   completeExistingGoogleLogin: (credential: string) => Promise<AuthResult>;
   completeExistingGoogleEmailLogin: () => Promise<AuthResult & { destination?: AuthenticatedDestination }>;
   startGoogleSignIn: (role?: UserRole) => Promise<AuthResult>;
@@ -738,7 +749,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { name: name.trim(), role, onboarded: false } },
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          data: { name: name.trim(), role, onboarded: false },
+        },
       });
       if (error) {
         logAuthRequestFailure('signup', error);
@@ -752,11 +766,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return { success: false, error: getAuthErrorMessage(error, 'signup') };
       }
-      if (!data.user || !data.session) {
+      if (!data.session) {
+        return {
+          success: true,
+          confirmationRequired: true,
+          error: 'Your sign-up request was accepted. Confirm your email before signing in; check your inbox and spam folder.',
+        };
+      }
+      if (!data.user) {
         return {
           success: false,
-          confirmationRequired: true,
-          error: "Check your email for confirmation instructions. If you don't receive one, try signing in or resetting your password.",
+          error: 'Your account session could not be verified. Please try signing in or contact support.',
         };
       }
       let fallbackUser = await publicUserFromSession(data.user, () => setSessionRecoveryError(
@@ -791,6 +811,108 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       logAuthRequestFailure('signup', error);
       return { success: false, error: getAuthErrorMessage(error, 'signup') };
+    }
+  }, [persistSession]);
+
+  const completeEmailConfirmation = useCallback(async (options?: {
+    tokenHash?: string;
+    type?: EmailConfirmationOtpType;
+    verifiedUserId?: string;
+  }): Promise<AuthResult & { destination?: AuthenticatedDestination; emailConfirmed?: boolean }> => {
+    const authClient = supabase;
+    if (!isSupabaseConfigured || !authClient) {
+      return { success: false, error: 'Email confirmation requires a configured Supabase connection.' };
+    }
+
+    let verifiedUserId = options?.verifiedUserId;
+    if (options?.tokenHash) {
+      if (!options.type) {
+        return { success: false, error: 'Email confirmation failed: the verification type is missing or unsupported.' };
+      }
+      try {
+        const { data, error } = await authClient.auth.verifyOtp({
+          token_hash: options.tokenHash,
+          type: options.type,
+        });
+        if (error) {
+          logAuthRequestFailure('signup', error);
+          return {
+            success: false,
+            error: `Email confirmation failed: ${safeAuthErrorMessage(error) ?? 'the link may be invalid or expired.'}`,
+          };
+        }
+        if (!data.user) {
+          return { success: false, error: 'Email confirmation failed: Supabase did not verify the account.' };
+        }
+        verifiedUserId = data.user.id;
+      } catch (error) {
+        logAuthRequestFailure('signup', error);
+        return {
+          success: false,
+          error: `Email confirmation failed: ${safeAuthErrorMessage(error) ?? 'check your connection and try again.'}`,
+        };
+      }
+    }
+
+    try {
+      const { data: sessionData, error: sessionError } = await authClient.auth.getSession();
+      if (sessionError) {
+        logAuthRequestFailure('signup', sessionError);
+        return {
+          success: false,
+          error: `Email confirmation succeeded, but the session could not be checked: ${safeAuthErrorMessage(sessionError) ?? 'try signing in.'}`,
+        };
+      }
+
+      const session = sessionData.session;
+      if (!session?.user || (verifiedUserId && session.user.id !== verifiedUserId)) {
+        if (verifiedUserId) {
+          setInitializing(false);
+          return { success: true, emailConfirmed: true };
+        }
+        return {
+          success: false,
+          error: 'Email confirmation could not be completed. This link may be invalid or expired.',
+        };
+      }
+
+      const { data: userData, error: userError } = await authClient.auth.getUser();
+      if (userError) {
+        logAuthRequestFailure('signup', userError);
+        return {
+          success: false,
+          error: `Email was confirmed, but the account session could not be verified: ${safeAuthErrorMessage(userError) ?? 'please sign in.'}`,
+        };
+      }
+      if (!userData.user || userData.user.id !== session.user.id) {
+        return verifiedUserId
+          ? { success: true, emailConfirmed: true }
+          : { success: false, error: 'Unable to verify the account session. Please sign in again.' };
+      }
+
+      let profileUnavailable = false;
+      const authenticatedUser = await publicUserFromSession(userData.user, () => {
+        profileUnavailable = true;
+      });
+      persistSession(authenticatedUser);
+      setSessionRecoveryError(profileUnavailable
+        ? 'Your session is active, but your ArtGuard profile could not be loaded. Retry to restore your account.'
+        : null);
+      setInitializing(false);
+
+      const destination: AuthenticatedDestination = authenticatedUser.onboarded
+        || Boolean(authenticatedUser.interests?.length)
+        ? '/home'
+        : '/onboarding/name';
+      return { success: true, emailConfirmed: true, destination };
+    } catch (error) {
+      logAuthRequestFailure('signup', error);
+      return {
+        success: false,
+        error: error instanceof DeactivatedAccountError
+          ? error.message
+          : `Email was confirmed, but account setup failed: ${safeAuthErrorMessage(error) ?? 'please try signing in or contact support.'}`,
+      };
     }
   }, [persistSession]);
 
@@ -1516,6 +1638,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       signUp,
       resendSignupConfirmation,
+      completeEmailConfirmation,
       completeExistingGoogleLogin,
       completeExistingGoogleEmailLogin,
       startGoogleSignIn,
@@ -1530,7 +1653,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       enableMockPremium,
       logout,
     }),
-    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, resendSignupConfirmation, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
+    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, resendSignupConfirmation, completeEmailConfirmation, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

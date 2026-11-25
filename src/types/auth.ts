@@ -40,3 +40,5 @@ export interface AuthResult {
   retryAfterSeconds?: number;
   confirmationRequired?: boolean;
 }
+
+export type EmailConfirmationOtpType = 'signup' | 'email';

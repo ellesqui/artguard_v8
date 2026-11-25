@@ -87,16 +87,18 @@ export function SignUpPage() {
     }
     setSubmitting(false);
 
+    if (result.confirmationRequired) {
+      if (!result.success) logAuthInteractionDiagnostic('signup.failed', { success: false });
+      setConfirmationEmail(email.trim());
+      setConfirmationMessage(result.success ? result.error : undefined);
+      setFormError(result.success ? undefined : result.error);
+      return;
+    }
+
     if (!result.success) {
       logAuthInteractionDiagnostic('signup.failed', { success: false });
-      if (result.confirmationRequired) {
-        setConfirmationEmail(email.trim());
-        setConfirmationMessage(undefined);
-        setFormError(result.error);
-      } else {
-        setConfirmationEmail('');
-        setFormError(result.error ?? 'Something went wrong. Please try again.');
-      }
+      setConfirmationEmail('');
+      setFormError(result.error ?? 'Something went wrong. Please try again.');
       return;
     }
     logAuthInteractionDiagnostic('signup.completed', { success: true });

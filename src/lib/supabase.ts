@@ -5,6 +5,14 @@ export const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
+if (import.meta.env.DEV && supabaseUrl) {
+  try {
+    console.info(`ArtGuard Supabase project hostname: ${new URL(supabaseUrl).hostname}`);
+  } catch {
+    console.warn('ArtGuard Supabase project hostname is unavailable because VITE_SUPABASE_URL is invalid.');
+  }
+}
+
 export const supabaseConfigError = !supabaseUrl
   ? 'Missing VITE_SUPABASE_URL. Create .env.local in the artguard folder.'
   : !supabasePublishableKey
