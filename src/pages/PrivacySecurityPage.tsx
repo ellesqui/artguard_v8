@@ -15,11 +15,17 @@ import './PrivacySecurityPage.css';
 
 type AccountSignInMethods =
   | { status: 'loading' | 'unknown' | 'unavailable' }
-  | { status: 'ready'; email: string; providers: string[]; hasEmailPassword: boolean };
+  | { status: 'ready'; userId: string; email: string; providers: string[]; hasEmailPassword: boolean };
 
-type PasswordDialogMode = 'set' | 'choose' | 'current' | 'reset' | 'reset-sent';
+type PasswordDialogMode = 'set' | 'choose' | 'current' | 'reset' | 'reset-sent' | 'verify-existing';
 type PasswordChangeMethod = 'current' | 'reset';
 type PasswordOperation = 'update' | 'reauthenticate' | 'verify-current' | 'reset-email';
+const PASSWORD_ENABLED_MARKER = 'artguard_password_enabled';
+
+type VerifiedPasswordUser = { id: string; email: string; user_metadata: Record<string, unknown> };
+type PasswordVerificationResult =
+  | { success: true; user: VerifiedPasswordUser }
+  | { success: false; error: string };
 
 function sameProviders(left: string[], right: string[]): boolean {
   const leftSet = new Set(left.map((provider) => provider.toLowerCase()));
@@ -31,6 +37,43 @@ function formatProviderName(provider: string): string {
   if (provider === 'google') return 'Google';
   if (provider === 'email') return 'Email & Password';
   return provider.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+async function loadAccountSignInMethods(expectedUserId: string): Promise<AccountSignInMethods | null> {
+  if (!supabase) return null;
+  const [
+    { data: { user: verifiedUser }, error: userError },
+    { data: identityData, error: identitiesError },
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.auth.getUserIdentities(),
+  ]);
+  if (userError || identitiesError || !verifiedUser || verifiedUser.id !== expectedUserId) return null;
+
+  const identities = identityData.identities;
+  const providers = [...new Set(identities.map((identity) => identity.provider.toLowerCase()))].sort();
+  const metadataProviders = verifiedUser.app_metadata?.providers;
+  if (
+    !verifiedUser.email
+    || identities.length === 0
+    || !identities.every((identity) => identity.user_id === verifiedUser.id)
+    || providers.length === 0
+    || (Array.isArray(metadataProviders) && !sameProviders(providers, metadataProviders))
+  ) return null;
+
+  // This editable marker only controls labels; Supabase Auth remains the authority for every password operation.
+  const hasEmailPassword = providers.includes('email')
+    || verifiedUser.user_metadata?.artguard_password_enabled === true;
+  const visibleProviders = hasEmailPassword && !providers.includes('email')
+    ? [...providers, 'email'].sort()
+    : providers;
+  return {
+    status: 'ready',
+    userId: verifiedUser.id,
+    email: verifiedUser.email,
+    providers: visibleProviders,
+    hasEmailPassword,
+  };
 }
 
 function getPasswordFlowError(error: unknown, operation: PasswordOperation): string {
@@ -143,6 +186,8 @@ export function PrivacySecurityPage() {
   const [passwordDialogMode, setPasswordDialogMode] = useState<PasswordDialogMode>('set');
   const [selectedPasswordMethod, setSelectedPasswordMethod] = useState<PasswordChangeMethod>();
   const [currentPassword, setCurrentPassword] = useState('');
+  const [existingPassword, setExistingPassword] = useState('');
+  const [existingPasswordError, setExistingPasswordError] = useState<string>();
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [reauthCode, setReauthCode] = useState('');
@@ -150,6 +195,7 @@ export function PrivacySecurityPage() {
   const [reauthMessage, setReauthMessage] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [savingPassword, setSavingPassword] = useState(false);
+  const [verifyingExistingPassword, setVerifyingExistingPassword] = useState(false);
   const [sendingReauthCode, setSendingReauthCode] = useState(false);
   const [requestingReset, setRequestingReset] = useState(false);
   const [resetRequestError, setResetRequestError] = useState<string>();
@@ -161,53 +207,39 @@ export function PrivacySecurityPage() {
       return () => { active = false; };
     }
 
-    setSignInMethods({ status: 'loading' });
-    void (async () => {
-      try {
-        const [
-          { data: { user: verifiedUser }, error: userError },
-          { data: identityData, error: identitiesError },
-        ] = await Promise.all([
-          supabase.auth.getUser(),
-          supabase.auth.getUserIdentities(),
-        ]);
-        if (userError || identitiesError || !verifiedUser || verifiedUser.id !== user.id) {
-          if (active) setSignInMethods({ status: 'unknown' });
-          return;
-        }
-
-        const identities = identityData.identities;
-        const providers = [...new Set(identities.map((identity) => identity.provider.toLowerCase()))].sort();
-        const metadataProviders = verifiedUser.app_metadata?.providers;
-        if (
-          !verifiedUser.email
-          || identities.length === 0
-          || !identities.every((identity) => identity.user_id === verifiedUser.id)
-          || providers.length === 0
-          || (Array.isArray(metadataProviders) && !sameProviders(providers, metadataProviders))
-        ) {
-          if (active) setSignInMethods({ status: 'unknown' });
-          return;
-        }
-
-        if (active) {
-          setSignInMethods({
-            status: 'ready',
-            email: verifiedUser.email,
-            providers,
-            hasEmailPassword: providers.includes('email'),
-          });
-        }
-      } catch {
-        if (active) setSignInMethods({ status: 'unknown' });
+    setSignInMethods((current) => (
+      current.status === 'ready' && current.userId === user.id
+        ? current
+        : { status: 'loading' }
+    ));
+    void loadAccountSignInMethods(user.id).then((methods) => {
+      if (!active) return;
+      if (methods) {
+        setSignInMethods(methods);
+      } else {
+        setSignInMethods((current) => (
+          current.status === 'ready' && current.userId === user.id
+            ? current
+            : { status: 'unknown' }
+        ));
       }
-    })();
+    }).catch(() => {
+      if (active) {
+        setSignInMethods((current) => (
+          current.status === 'ready' && current.userId === user.id
+            ? current
+            : { status: 'unknown' }
+        ));
+      }
+    });
 
     return () => { active = false; };
   }, [backendMode, identityRefresh, user?.id]);
 
   const clearSetPasswordForm = () => {
     setCurrentPassword('');
+    setExistingPassword('');
+    setExistingPasswordError(undefined);
     setNewPassword('');
     setConfirmNewPassword('');
     setReauthCode('');
@@ -219,7 +251,7 @@ export function PrivacySecurityPage() {
   };
 
   const closeSetPasswordDialog = () => {
-    if (savingPassword || sendingReauthCode || requestingReset) return;
+    if (savingPassword || verifyingExistingPassword || sendingReauthCode || requestingReset) return;
     setSetPasswordOpen(false);
     clearSetPasswordForm();
     setSelectedPasswordMethod(undefined);
@@ -243,10 +275,17 @@ export function PrivacySecurityPage() {
   };
 
   const backToPasswordOptions = () => {
-    if (savingPassword || sendingReauthCode || requestingReset) return;
+    if (savingPassword || verifyingExistingPassword || sendingReauthCode || requestingReset) return;
     clearSetPasswordForm();
     setSelectedPasswordMethod(undefined);
     setPasswordDialogMode('choose');
+  };
+
+  const backToSetPassword = () => {
+    if (verifyingExistingPassword) return;
+    setExistingPassword('');
+    setExistingPasswordError(undefined);
+    setPasswordDialogMode('set');
   };
 
   const requestPasswordReauthentication = async () => {
@@ -274,8 +313,10 @@ export function PrivacySecurityPage() {
     }
   };
 
-  const verifyCurrentPassword = async (): Promise<boolean> => {
-    if (!supabase || signInMethods.status !== 'ready' || !user?.id) return false;
+  const verifyPasswordForCurrentUser = async (password: string): Promise<PasswordVerificationResult> => {
+    if (!supabase || signInMethods.status !== 'ready' || !user?.id) {
+      return { success: false, error: 'Your account session could not be verified. Sign in again and retry.' };
+    }
     try {
       const [
         { data: { session }, error: sessionError },
@@ -294,37 +335,114 @@ export function PrivacySecurityPage() {
         || !verifiedUser.email
         || verifiedUser.email.toLowerCase() !== signInMethods.email.toLowerCase()
       ) {
-        setPasswordError('Your account session could not be verified. Sign in again and retry.');
-        return false;
+        return { success: false, error: 'Your account session could not be verified. Sign in again and retry.' };
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({
         email: verifiedUser.email,
-        password: currentPassword,
+        password,
       });
       if (error) {
-        if (error.code === 'invalid_credentials') setCurrentPassword('');
-        setPasswordError(getPasswordFlowError(error, 'verify-current'));
-        return false;
+        return { success: false, error: getPasswordFlowError(error, 'verify-current') };
       }
-      if (!data.session || !data.user || data.user.id !== verifiedUser.id) {
+      if (
+        !data.session
+        || !data.user
+        || data.session.user.id !== verifiedUser.id
+        || data.user.id !== verifiedUser.id
+      ) {
         if (data.session) {
           const { error: restoreError } = await supabase.auth.setSession({
             access_token: session.access_token,
             refresh_token: session.refresh_token,
           });
           if (restoreError) {
-            setPasswordError('The account verification returned a different user and the original session could not be restored. Sign in again before continuing.');
-            return false;
+            return {
+              success: false,
+              error: 'The account verification returned a different user and the original session could not be restored. Sign in again before continuing.',
+            };
           }
         }
-        setPasswordError('The current password did not verify for the signed-in account. The original session remains active.');
-        return false;
+        return {
+          success: false,
+          error: 'The current password did not verify for the signed-in account. The original session remains active.',
+        };
       }
-      return true;
+      return {
+        success: true,
+        user: {
+          id: verifiedUser.id,
+          email: verifiedUser.email,
+          user_metadata: verifiedUser.user_metadata,
+        },
+      };
     } catch (error) {
-      setPasswordError(getPasswordFlowError(error, 'verify-current'));
-      return false;
+      return { success: false, error: getPasswordFlowError(error, 'verify-current') };
+    }
+  };
+
+  const handleExistingPasswordVerification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (
+      verifyingExistingPassword
+      || signInMethods.status !== 'ready'
+      || signInMethods.hasEmailPassword
+      || !supabase
+    ) return;
+    setExistingPasswordError(undefined);
+    if (!existingPassword) {
+      setExistingPasswordError('Enter your existing ArtGuard Hub password.');
+      return;
+    }
+
+    setVerifyingExistingPassword(true);
+    try {
+      const verification = await verifyPasswordForCurrentUser(existingPassword);
+      if (verification.success === false) {
+        setExistingPassword('');
+        setExistingPasswordError(verification.error);
+        return;
+      }
+
+      const { data: { user: currentUser }, error: currentUserError } = await supabase.auth.getUser();
+      if (currentUserError || !currentUser || currentUser.id !== verification.user.id) {
+        setExistingPasswordError('The verified account no longer matches this session. Sign in again and retry.');
+        return;
+      }
+      const { data, error } = await supabase.auth.updateUser({
+        data: {
+          ...currentUser.user_metadata,
+          [PASSWORD_ENABLED_MARKER]: true,
+        },
+      });
+      if (error) {
+        setExistingPasswordError(getPasswordFlowError(error, 'update'));
+        return;
+      }
+      if (
+        !data.user
+        || data.user.id !== verification.user.id
+        || data.user.user_metadata?.[PASSWORD_ENABLED_MARKER] !== true
+      ) {
+        setExistingPasswordError('The password was verified, but its settings indicator could not be confirmed. Refresh Settings before trying again.');
+        return;
+      }
+
+      setSignInMethods({
+        status: 'ready',
+        userId: data.user.id,
+        email: data.user.email ?? signInMethods.email,
+        providers: [...new Set([...signInMethods.providers, 'email'])].sort(),
+        hasEmailPassword: true,
+      });
+      setIdentityRefresh((current) => current + 1);
+      setSetPasswordOpen(false);
+      clearSetPasswordForm();
+      showToast('Existing password verified. Email & Password is now shown as a sign-in method.');
+    } catch (error) {
+      setExistingPasswordError(getPasswordFlowError(error, 'verify-current'));
+    } finally {
+      setVerifyingExistingPassword(false);
     }
   };
 
@@ -357,9 +475,38 @@ export function PrivacySecurityPage() {
 
     setSavingPassword(true);
     try {
-      if (passwordDialogMode === 'current' && !(await verifyCurrentPassword())) return;
+      let verifiedAccountUser: VerifiedPasswordUser | null = null;
+      if (passwordDialogMode === 'current') {
+        const verification = await verifyPasswordForCurrentUser(currentPassword);
+        if (verification.success === false) {
+          setCurrentPassword('');
+          setPasswordError(verification.error);
+          return;
+        }
+        verifiedAccountUser = verification.user;
+      } else {
+        const { data: { user: verifiedUser }, error: userError } = await supabase.auth.getUser();
+        if (userError || !verifiedUser || !verifiedUser.email || verifiedUser.id !== user?.id) {
+          setPasswordError('Your account session could not be verified. Sign in again and retry.');
+          return;
+        }
+        verifiedAccountUser = {
+          id: verifiedUser.id,
+          email: verifiedUser.email,
+          user_metadata: verifiedUser.user_metadata,
+        };
+      }
+
+      if (!verifiedAccountUser) {
+        setPasswordError('Your account session could not be verified. Sign in again and retry.');
+        return;
+      }
       const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
+        data: {
+          ...verifiedAccountUser.user_metadata,
+          [PASSWORD_ENABLED_MARKER]: true,
+        },
         ...(reauthRequired ? { nonce: reauthCode.trim() } : {}),
       });
       if (error) {
@@ -370,16 +517,27 @@ export function PrivacySecurityPage() {
         }
         return;
       }
-      if (!data.user || data.user.id !== user?.id) {
+      if (!data.user || data.user.id !== verifiedAccountUser.id) {
         setPasswordError('The password update could not be verified for this account. Please refresh and check sign-in methods.');
+        return;
+      }
+      if (data.user.user_metadata?.[PASSWORD_ENABLED_MARKER] !== true) {
+        setPasswordError('The password was updated, but its settings indicator could not be confirmed. Refresh Settings before trying again.');
         return;
       }
 
       const hadPassword = signInMethods.hasEmailPassword;
+      const providers = [...new Set([...signInMethods.providers, 'email'])].sort();
       setSetPasswordOpen(false);
       clearSetPasswordForm();
       setSelectedPasswordMethod(undefined);
-      setSignInMethods({ status: 'loading' });
+      setSignInMethods({
+        status: 'ready',
+        userId: data.user.id,
+        email: data.user.email ?? signInMethods.email,
+        providers,
+        hasEmailPassword: true,
+      });
       setIdentityRefresh((current) => current + 1);
       showToast(hadPassword
         ? 'Password successfully updated.'
@@ -484,7 +642,9 @@ export function PrivacySecurityPage() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 id="set-password-title">
-              {signInMethods.hasEmailPassword ? 'Change Your Password' : 'Set Your Password'}
+              {passwordDialogMode === 'verify-existing'
+                ? 'Verify Your Existing Password'
+                : signInMethods.hasEmailPassword ? 'Change Your Password' : 'Set Your Password'}
             </h2>
 
             {passwordDialogMode === 'choose' && (
@@ -629,6 +789,71 @@ export function PrivacySecurityPage() {
                       disabled={savingPassword || sendingReauthCode}
                     >
                       {signInMethods.hasEmailPassword ? 'Update Password' : 'Set Password'}
+                    </AuthButton>
+                  </div>
+                </form>
+                {passwordDialogMode === 'set' && !signInMethods.hasEmailPassword && (
+                  <button
+                    type="button"
+                    className="auth-link-btn t-xs"
+                    onClick={() => {
+                      setExistingPassword('');
+                      setExistingPasswordError(undefined);
+                      setPasswordDialogMode('verify-existing');
+                    }}
+                    style={{ marginTop: 12 }}
+                  >
+                    Already set a password? Verify it
+                  </button>
+                )}
+              </>
+            )}
+
+            {passwordDialogMode === 'verify-existing' && (
+              <>
+                <p>Verify your existing ArtGuard Hub password to update the sign-in methods shown in Settings. Your password will not be changed.</p>
+                <form onSubmit={handleExistingPasswordVerification} noValidate>
+                  <AuthInput
+                    label="Existing Password"
+                    icon="lock"
+                    type="password"
+                    value={existingPassword}
+                    onChange={(value) => {
+                      setExistingPassword(value);
+                      setExistingPasswordError(undefined);
+                    }}
+                    autoComplete="current-password"
+                    name="existing-password"
+                    disabled={verifyingExistingPassword}
+                    required
+                  />
+                  {existingPasswordError && (
+                    <div className="auth-banner error privacy-set-password-error" role="alert">
+                      <Icon name="alert" style={{ stroke: 'var(--ag-danger)' }} />
+                      <span>{existingPasswordError}</span>
+                    </div>
+                  )}
+                  <div className="account-dialog-actions">
+                    <AuthButton
+                      variant="ghost"
+                      onClick={backToSetPassword}
+                      disabled={verifyingExistingPassword}
+                    >
+                      Back
+                    </AuthButton>
+                    <AuthButton
+                      variant="ghost"
+                      onClick={closeSetPasswordDialog}
+                      disabled={verifyingExistingPassword}
+                    >
+                      Cancel
+                    </AuthButton>
+                    <AuthButton
+                      type="submit"
+                      loading={verifyingExistingPassword}
+                      disabled={verifyingExistingPassword}
+                    >
+                      Verify Password
                     </AuthButton>
                   </div>
                 </form>

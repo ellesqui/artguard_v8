@@ -10,6 +10,7 @@ import { validateConfirmPassword, validateRequired } from '../utils/validators';
 
 type RecoveryState = 'checking' | 'ready' | 'invalid' | 'success';
 type RecoveryOperation = 'update' | 'reauthenticate';
+const PASSWORD_ENABLED_MARKER = 'artguard_password_enabled';
 
 function getRecoveryError(error: unknown, operation: RecoveryOperation = 'update'): string {
   const errorName = error instanceof Error ? error.name : '';
@@ -65,6 +66,7 @@ export function ResetPasswordPage() {
   const [passwordError, setPasswordError] = useState<string | undefined>();
   const [confirmError, setConfirmError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | undefined>();
+  const [successMessage, setSuccessMessage] = useState('Password updated successfully. Returning you to sign in…');
   const [reauthRequired, setReauthRequired] = useState(false);
   const [reauthCode, setReauthCode] = useState('');
   const [reauthMessage, setReauthMessage] = useState<string>();
@@ -144,6 +146,10 @@ export function ResetPasswordPage() {
       }
       const { data: updatedUserData, error } = await supabase.auth.updateUser({
         password,
+        data: {
+          ...userData.user.user_metadata,
+          [PASSWORD_ENABLED_MARKER]: true,
+        },
         ...(reauthRequired ? { nonce: reauthCode.trim() } : {}),
       });
       if (error) {
@@ -169,10 +175,21 @@ export function ResetPasswordPage() {
         setFormError(getRecoveryError(error));
         return;
       }
-      if (!updatedUserData.user || updatedUserData.user.id !== userData.user.id) {
+      if (
+        !updatedUserData.user
+        || updatedUserData.user.id !== userData.user.id
+        || updatedUserData.user.user_metadata?.[PASSWORD_ENABLED_MARKER] !== true
+      ) {
         setFormError('The password update could not be verified for this account. Request a new reset link and try again.');
         return;
       }
+      const { data: refreshedUserData, error: refreshError } = await supabase.auth.getUser();
+      const currentUserRefreshed = !refreshError
+        && refreshedUserData.user?.id === userData.user.id
+        && refreshedUserData.user.user_metadata?.[PASSWORD_ENABLED_MARKER] === true;
+      setSuccessMessage(currentUserRefreshed
+        ? 'Password updated successfully. Returning you to sign in…'
+        : 'Password updated successfully. Sign in again to continue.');
       recoveryCompletedRef.current = true;
       clearPasswordRecoverySession();
       setPassword('');
@@ -306,7 +323,7 @@ export function ResetPasswordPage() {
         <>
           <div className="auth-banner success" role="status">
             <Icon name="check-circle" style={{ stroke: 'var(--ag-success)' }} />
-            <span>Password updated successfully. Returning you to sign in…</span>
+            <span>{successMessage}</span>
           </div>
           <AuthButton onClick={() => navigate('/login', { replace: true })}>Continue to Login</AuthButton>
         </>
