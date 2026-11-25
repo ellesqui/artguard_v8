@@ -27,7 +27,7 @@ export function AuthShell({ brandHeader = false, markIcon = 'shield', title, sub
           when a form (e.g. Sign Up) is taller than the screen, the whole
           page scrolls instead of cutting content off. */}
       <IonContent fullscreen className="auth-viewport">
-        <div className="auth-backdrop">
+        <div className={`auth-backdrop${authMode ? ' auth-backdrop--split' : ''}`}>
           <div className={`auth-card${authMode ? ` auth-card--split auth-card--${authMode}` : ''}`}>
             {authMode && (
               <div className="auth-art-panel" aria-hidden="true">

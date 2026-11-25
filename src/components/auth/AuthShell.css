@@ -6,7 +6,7 @@
    as a real installed app.
 
   Tablet / Desktop: the split Login / Sign Up shell fills the visible
-  browser viewport with a small safe margin, while the form panel keeps
+  browser viewport, while the form panel keeps
   its own accessible scroll fallback if content ever exceeds the height.
    ============================================================ */
 
@@ -51,6 +51,10 @@ ion-content.auth-viewport::part(background) {
     padding: 12px;
   }
 
+  .auth-backdrop--split {
+    padding: 0;
+  }
+
   .auth-card {
     flex: none;
     width: 100%;
@@ -68,9 +72,12 @@ ion-content.auth-viewport::part(background) {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     width: 100%;
     max-width: none;
-    height: calc(100dvh - 24px);
+    height: 100dvh;
     min-height: 0;
-    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--ag-surface);
   }
 
   .auth-card--split .auth-art-panel {
@@ -88,10 +95,8 @@ ion-content.auth-viewport::part(background) {
     min-height: 0;
     overflow-y: auto;
     justify-content: center;
-    background: linear-gradient(140deg, var(--ag-glass-reflection), transparent 48%), var(--ag-glass-soft-bg);
+    background: var(--ag-surface);
     border-left: 1px solid var(--ag-glass-border);
-    -webkit-backdrop-filter: blur(var(--ag-glass-blur-soft));
-    backdrop-filter: blur(var(--ag-glass-blur-soft));
   }
 
   .auth-card--signup .auth-art-panel {
@@ -101,6 +106,7 @@ ion-content.auth-viewport::part(background) {
 
   .auth-card--signup .auth-scroll {
     order: 1;
+    justify-content: flex-start;
     animation: auth-form-from-right 0.56s both cubic-bezier(0.22, 0.61, 0.36, 1);
   }
 
