@@ -1356,6 +1356,87 @@ export function CommissionWorkspacePage() {
       nextStepDescription = 'This request is no longer active.';
     }
 
+    const overviewContent = (
+      <section className="workspace-overview" aria-label="People and agreement">
+        <div className="row gap-10 workspace-counterparty">
+          <div
+            className="avatar avatar-sm"
+            style={realCounterparty?.avatar_data_url ? { backgroundImage: `url(${realCounterparty.avatar_data_url})`, backgroundSize: 'cover' } : {}}
+          >
+            {!realCounterparty?.avatar_data_url && initialsFor(realCounterparty?.name ?? '?')}
+          </div>
+          <div style={{ textAlign: 'left', minWidth: 0 }}>
+            <div className="t-sm fw-700">{realCounterparty?.name ?? 'Unknown'}</div>
+            <div className="t-xs c-low">{isClient ? 'Artist' : 'Client'} · {isClient ? 'Your artist' : 'Your client'}</div>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm workspace-message-button" onClick={() => void handleMessageCounterparty()}>
+            <Icon name="chat" style={{ width: 14, height: 14 }} />
+            Message {isClient ? 'Artist' : 'Client'}
+          </button>
+        </div>
+        {realCommission.service_name_snapshot && (
+          <div className="workspace-service-meta">
+            <span>Service · {realCommission.service_name_snapshot}</span>
+            {realCommission.turnaround_days_snapshot !== null && realCommission.turnaround_days_snapshot !== undefined && (
+              <span>Typical turnaround · {realCommission.turnaround_days_snapshot} days</span>
+            )}
+          </div>
+        )}
+        {(showAgreedPrice || showBudgetGuide || showProposedQuote || showEstimatedHours || showDeadlineSummary || realCommission.status === 'COMPLETED') && (
+          <div className="workspace-summary-metrics">
+            {showAgreedPrice && (
+              <div className="workspace-summary-metric workspace-summary-metric-primary">
+                <div className="workspace-agreed-price-label">
+                  <span>Agreed Price</span>
+                  {collapsePaidPaymentPanel && <span className="badge badge-success workspace-paid-badge" role="status">Paid</span>}
+                </div>
+                <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
+              </div>
+            )}
+            {showBudgetGuide && (
+              <div className="workspace-summary-metric">
+                <span>{isQuoteAwaitingClient ? 'Client Budget · Guide' : 'Client Budget'}</span>
+                <strong>{formatDemoAmount(realCommission.client_budget!, realCommission.client_budget_currency!)}</strong>
+              </div>
+            )}
+            {showProposedQuote && (
+              <div className="workspace-summary-metric">
+                <span>Proposed Price</span>
+                <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
+              </div>
+            )}
+            {showEstimatedHours && (
+              <div className="workspace-summary-metric">
+                <span>Estimated Work</span>
+                <strong>{realCommission.estimated_working_hours} {realCommission.estimated_working_hours === 1 ? 'hour' : 'hours'}</strong>
+              </div>
+            )}
+            {showDeadlineSummary && (
+              <div className="workspace-summary-metric">
+                <span>Target Deadline</span>
+                <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
+                {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
+                  <small className="c-danger">
+                    {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
+                  </small>
+                ) : remainingMilliseconds === 0 ? (
+                  <small className="c-warning">Due now</small>
+                ) : (
+                  <small>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</small>
+                ))}
+              </div>
+            )}
+            {realCommission.status === 'COMPLETED' && (
+              <div className="workspace-summary-metric">
+                <span>Completed</span>
+                <strong>{formatCommissionDate(realCommission.completed_at) ?? 'Date not recorded'}</strong>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+    );
+
     return (
       <ScreenShell
         contentClassName="commission-workspace-content"
@@ -1587,6 +1668,8 @@ export function CommissionWorkspacePage() {
             )}
           </div>
         </section>
+
+        <div className="workspace-mobile-overview">{overviewContent}</div>
 
         <main className="workspace-main-column">
         <section className="workspace-brief" aria-labelledby="workspace-brief-title">
@@ -1828,84 +1911,7 @@ export function CommissionWorkspacePage() {
         </div>
         <div className="workspace-sidebar-stack">
         <aside className="workspace-sidebar-primary" aria-label="Transaction summary">
-          <section className="workspace-overview" aria-label="People and agreement">
-            <div className="row gap-10 workspace-counterparty">
-              <div
-                className="avatar avatar-sm"
-                style={realCounterparty?.avatar_data_url ? { backgroundImage: `url(${realCounterparty.avatar_data_url})`, backgroundSize: 'cover' } : {}}
-              >
-                {!realCounterparty?.avatar_data_url && initialsFor(realCounterparty?.name ?? '?')}
-              </div>
-              <div style={{ textAlign: 'left', minWidth: 0 }}>
-                <div className="t-sm fw-700">{realCounterparty?.name ?? 'Unknown'}</div>
-                <div className="t-xs c-low">{isClient ? 'Artist' : 'Client'} · {isClient ? 'Your artist' : 'Your client'}</div>
-              </div>
-              <button type="button" className="btn btn-ghost btn-sm workspace-message-button" onClick={() => void handleMessageCounterparty()}>
-                <Icon name="chat" style={{ width: 14, height: 14 }} />
-                Message {isClient ? 'Artist' : 'Client'}
-              </button>
-            </div>
-            {realCommission.service_name_snapshot && (
-              <div className="workspace-service-meta">
-                <span>Service · {realCommission.service_name_snapshot}</span>
-                {realCommission.turnaround_days_snapshot !== null && realCommission.turnaround_days_snapshot !== undefined && (
-                  <span>Typical turnaround · {realCommission.turnaround_days_snapshot} days</span>
-                )}
-              </div>
-            )}
-            {(showAgreedPrice || showBudgetGuide || showProposedQuote || showEstimatedHours || showDeadlineSummary || realCommission.status === 'COMPLETED') && (
-              <div className="workspace-summary-metrics">
-                {showAgreedPrice && (
-                  <div className="workspace-summary-metric workspace-summary-metric-primary">
-                    <div className="workspace-agreed-price-label">
-                      <span>Agreed Price</span>
-                      {collapsePaidPaymentPanel && <span className="badge badge-success workspace-paid-badge" role="status">Paid</span>}
-                    </div>
-                    <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
-                  </div>
-                )}
-                {showBudgetGuide && (
-                  <div className="workspace-summary-metric">
-                    <span>{isQuoteAwaitingClient ? 'Client Budget · Guide' : 'Client Budget'}</span>
-                    <strong>{formatDemoAmount(realCommission.client_budget!, realCommission.client_budget_currency!)}</strong>
-                  </div>
-                )}
-                {showProposedQuote && (
-                  <div className="workspace-summary-metric">
-                    <span>Proposed Price</span>
-                    <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
-                  </div>
-                )}
-                {showEstimatedHours && (
-                  <div className="workspace-summary-metric">
-                    <span>Estimated Work</span>
-                    <strong>{realCommission.estimated_working_hours} {realCommission.estimated_working_hours === 1 ? 'hour' : 'hours'}</strong>
-                  </div>
-                )}
-                {showDeadlineSummary && (
-                  <div className="workspace-summary-metric">
-                    <span>Target Deadline</span>
-                    <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
-                    {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
-                      <small className="c-danger">
-                        {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
-                      </small>
-                    ) : remainingMilliseconds === 0 ? (
-                      <small className="c-warning">Due now</small>
-                    ) : (
-                      <small>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</small>
-                    ))}
-                  </div>
-                )}
-                {realCommission.status === 'COMPLETED' && (
-                  <div className="workspace-summary-metric">
-                    <span>Completed</span>
-                    <strong>{formatCommissionDate(realCommission.completed_at) ?? 'Date not recorded'}</strong>
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
+          <div className="workspace-desktop-overview">{overviewContent}</div>
 
           {showPaymentPanel && (
             <section
