@@ -6,6 +6,7 @@ import {
   validateDirectCommissionQuote,
   validateOptionalCommissionBudget,
 } from '../src/lib/commissionWorkflow.ts';
+import { getInProgressCommissionNextAction } from '../src/lib/commissionWorkspacePresentation.ts';
 
 test('completion requires an approved deliverable and ignores failed upload attempts only after approval', () => {
   assert.equal(getDeliverableCompletionBlocker([]), 'no-approved-deliverable');
@@ -64,4 +65,86 @@ test('direct quotes require valid price, currency, and positive finite working h
   assert.match(validateDirectCommissionQuote('1200', 'peso', '3') ?? '', /three-letter/);
   assert.match(validateDirectCommissionQuote('1200', 'PHP', '0') ?? '', /positive number/);
   assert.match(validateDirectCommissionQuote('1200', 'PHP', 'Infinity') ?? '', /positive number/);
+});
+
+test('Artist prioritizes an in-progress Sketch while noting that Thumbnail awaits Client review', () => {
+  const action = getInProgressCommissionNextAction({
+    isArtist: true,
+    isClient: false,
+    completionReady: false,
+    submittedDeliverableExists: false,
+    activeMilestone: { name: 'Sketch', status: 'IN_PROGRESS' },
+    submittedMilestone: { name: 'Thumbnail' },
+    startableMilestone: null,
+  });
+
+  assert.equal(action.title, 'Continue Sketch');
+  assert.match(action.description, /submit this stage when ready/i);
+  assert.match(action.description, /Thumbnail is awaiting Client review/);
+  assert.doesNotMatch(action.title, /Waiting for Client Review/);
+});
+
+test('Artist starts a pending Sketch after a submitted Thumbnail when the existing selector allows it', () => {
+  const action = getInProgressCommissionNextAction({
+    isArtist: true,
+    isClient: false,
+    completionReady: false,
+    submittedDeliverableExists: false,
+    activeMilestone: { name: 'Thumbnail', status: 'SUBMITTED' },
+    submittedMilestone: { name: 'Thumbnail' },
+    startableMilestone: { name: 'Sketch' },
+  });
+
+  assert.equal(action.title, 'Start Sketch');
+  assert.equal(action.description, 'Begin the next work stage.');
+});
+
+test('Artist waits for Client review only when no milestone is startable', () => {
+  const action = getInProgressCommissionNextAction({
+    isArtist: true,
+    isClient: false,
+    completionReady: false,
+    submittedDeliverableExists: false,
+    activeMilestone: { name: 'Thumbnail', status: 'SUBMITTED' },
+    submittedMilestone: { name: 'Thumbnail' },
+    startableMilestone: null,
+  });
+
+  assert.equal(action.title, 'Waiting for Client Review');
+  assert.match(action.description, /reviewing Thumbnail/);
+  assert.doesNotMatch(action.description, /Start Sketch|submit this stage/);
+});
+
+test('Client reviews a submitted Thumbnail instead of receiving Artist-only Sketch guidance', () => {
+  const action = getInProgressCommissionNextAction({
+    isArtist: false,
+    isClient: true,
+    completionReady: false,
+    submittedDeliverableExists: false,
+    activeMilestone: { name: 'Sketch', status: 'IN_PROGRESS' },
+    submittedMilestone: { name: 'Thumbnail' },
+    startableMilestone: null,
+  });
+
+  assert.equal(action.title, 'Thumbnail Awaiting Your Approval');
+  assert.match(action.description, /Review this stage/);
+  assert.doesNotMatch(action.title, /Continue Sketch|Start Sketch/);
+  assert.doesNotMatch(action.description, /submit this stage/i);
+});
+
+test('Artist action takes priority when another work stage is awaiting Client review', () => {
+  const action = getInProgressCommissionNextAction({
+    isArtist: true,
+    isClient: false,
+    completionReady: false,
+    submittedDeliverableExists: false,
+    activeMilestone: { name: 'Line Art', status: 'IN_PROGRESS' },
+    submittedMilestone: { name: 'Thumbnail' },
+    startableMilestone: null,
+  });
+
+  assert.equal(action.title, 'Continue Line Art');
+  assert.match(action.description, /submit this stage when ready/i);
+  assert.match(action.description, /Thumbnail is awaiting Client review/);
+  assert.doesNotMatch(action.title, /Waiting for Client Review/);
 });

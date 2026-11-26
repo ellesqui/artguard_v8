@@ -25,6 +25,7 @@ import { getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCom
 import { supabaseConfigurationStatus } from '../lib/supabase';
 import { formatDateOnly } from '../lib/commissionDeadline';
 import { getCommissionCompletionBlocker } from '../lib/commissionWorkflow';
+import { getInProgressCommissionNextAction } from '../lib/commissionWorkspacePresentation';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -1271,33 +1272,17 @@ export function CommissionWorkspacePage() {
           ? 'The Client must confirm the simulated payment before you can start work.'
           : 'Start work when you are ready to begin the commission.';
     } else if (realCommission.status === 'IN_PROGRESS') {
-      if (completionReady && isClient) {
-        nextStepTitle = 'All Required Work Approved — Ready to Complete';
-        nextStepDescription = 'All deliverables, milestones, and revisions are clear. You can close the commission.';
-      } else if (submittedDeliverableExists && isClient) {
-        nextStepTitle = 'Artwork Submitted — Awaiting Your Review';
-        nextStepDescription = 'Review the submitted deliverable below and approve it or request a revision.';
-      } else if (submittedMilestoneExists && isClient) {
-        nextStepTitle = `${submittedMilestone?.name ?? 'Work stage'} Awaiting Your Approval`;
-        nextStepDescription = 'Review this stage and approve it when it meets the agreed requirements.';
-      } else if (submittedMilestoneExists && isArtist && !startableMilestone) {
-        nextStepTitle = 'Waiting for Client Review';
-        nextStepDescription = `The Client is reviewing ${submittedMilestone?.name ?? 'the submitted work stage'}.`;
-      } else if (isArtist) {
-        nextStepTitle = activeMilestone
-          ? startableMilestone ? `Start ${startableMilestone.name}` : `Continue ${activeMilestone.name}`
-          : 'Continue the commission';
-        nextStepDescription = startableMilestone
-          ? 'Begin the next work stage.'
-          : activeMilestone
-            ? 'Add an optional note, then submit this stage when it is ready for Client review.'
-            : 'Continue the work and submit artwork for Client review in Deliverables below.';
-      } else {
-        nextStepTitle = activeMilestone ? `Artist is preparing ${activeMilestone.name}` : 'Your Artist is working on this commission';
-        nextStepDescription = activeMilestone
-          ? "You'll be notified when this stage is ready."
-          : 'Progress updates and work-stage reviews will appear below.';
-      }
+      const nextAction = getInProgressCommissionNextAction({
+        isArtist,
+        isClient,
+        completionReady,
+        submittedDeliverableExists,
+        activeMilestone: activeMilestone ? { name: activeMilestone.name, status: activeMilestone.status } : null,
+        submittedMilestone: submittedMilestone ? { name: submittedMilestone.name } : null,
+        startableMilestone: startableMilestone ? { name: startableMilestone.name } : null,
+      });
+      nextStepTitle = nextAction.title;
+      nextStepDescription = nextAction.description;
     } else if (realCommission.status === 'REVISION_REQUESTED') {
       if (completionReady && isClient) {
         nextStepTitle = 'All Required Work Approved — Ready to Complete';
@@ -1366,82 +1351,7 @@ export function CommissionWorkspacePage() {
           </div>
         }
       >
-        <section className="workspace-overview" aria-label="Commission summary">
-          <div className="row gap-10 workspace-counterparty">
-            <div
-              className="avatar avatar-sm"
-              style={realCounterparty?.avatar_data_url ? { backgroundImage: `url(${realCounterparty.avatar_data_url})`, backgroundSize: 'cover' } : {}}
-            >
-              {!realCounterparty?.avatar_data_url && initialsFor(realCounterparty?.name ?? '?')}
-            </div>
-            <div style={{ textAlign: 'left', minWidth: 0 }}>
-              <div className="t-sm fw-700">{realCounterparty?.name ?? 'Unknown'}</div>
-              <div className="t-xs c-low">{isClient ? 'Artist' : 'Client'} · {isClient ? 'Your artist' : 'Your client'}</div>
-            </div>
-            <button type="button" className="btn btn-ghost btn-sm workspace-message-button" onClick={() => void handleMessageCounterparty()}>
-              <Icon name="chat" style={{ width: 14, height: 14 }} />
-              Message {isClient ? 'Artist' : 'Client'}
-            </button>
-          </div>
-          {realCommission.service_name_snapshot && (
-            <div className="workspace-service-meta">
-              <span>Service · {realCommission.service_name_snapshot}</span>
-              {realCommission.turnaround_days_snapshot !== null && realCommission.turnaround_days_snapshot !== undefined && (
-                <span>Typical turnaround · {realCommission.turnaround_days_snapshot} days</span>
-              )}
-            </div>
-          )}
-          {(showAgreedPrice || showBudgetGuide || showProposedQuote || showEstimatedHours || showDeadlineSummary || realCommission.status === 'COMPLETED') && (
-            <div className="workspace-summary-metrics">
-            {showAgreedPrice && (
-              <div className="workspace-summary-metric workspace-summary-metric-primary">
-                <span>Agreed Price</span>
-                <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
-              </div>
-              )}
-            {showBudgetGuide && (
-              <div className="workspace-summary-metric">
-                <span>{isQuoteAwaitingClient ? 'Client Budget · Guide' : 'Client Budget'}</span>
-                <strong>{formatDemoAmount(realCommission.client_budget!, realCommission.client_budget_currency!)}</strong>
-              </div>
-            )}
-            {showProposedQuote && (
-              <div className="workspace-summary-metric">
-                <span>Proposed Price</span>
-                <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
-              </div>
-            )}
-            {showEstimatedHours && (
-              <div className="workspace-summary-metric">
-                <span>Estimated Work</span>
-                <strong>{realCommission.estimated_working_hours} {realCommission.estimated_working_hours === 1 ? 'hour' : 'hours'}</strong>
-              </div>
-            )}
-            {showDeadlineSummary && (
-              <div className="workspace-summary-metric">
-                <span>Target Deadline</span>
-                <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
-                {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
-                  <small className="c-danger">
-                    {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
-                  </small>
-                ) : remainingMilliseconds === 0 ? (
-                  <small className="c-warning">Due now</small>
-                ) : (
-                  <small>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</small>
-                ))}
-              </div>
-            )}
-            {realCommission.status === 'COMPLETED' && (
-              <div className="workspace-summary-metric">
-                <span>Completed</span>
-                <strong>{formatCommissionDate(realCommission.completed_at) ?? 'Date not recorded'}</strong>
-              </div>
-            )}
-            </div>
-          )}
-        </section>
-
+        <div className="workspace-layout">
         <section className="workspace-next-action" aria-labelledby="workspace-next-action-title">
           <div className="workspace-next-action-copy">
             <h2 id="workspace-next-action-title">{nextStepTitle}</h2>
@@ -1625,6 +1535,120 @@ export function CommissionWorkspacePage() {
           </div>
         </section>
 
+        <aside className="workspace-sidebar-primary" aria-label="Transaction summary">
+          <section className="workspace-overview" aria-label="People and agreement">
+            <div className="row gap-10 workspace-counterparty">
+              <div
+                className="avatar avatar-sm"
+                style={realCounterparty?.avatar_data_url ? { backgroundImage: `url(${realCounterparty.avatar_data_url})`, backgroundSize: 'cover' } : {}}
+              >
+                {!realCounterparty?.avatar_data_url && initialsFor(realCounterparty?.name ?? '?')}
+              </div>
+              <div style={{ textAlign: 'left', minWidth: 0 }}>
+                <div className="t-sm fw-700">{realCounterparty?.name ?? 'Unknown'}</div>
+                <div className="t-xs c-low">{isClient ? 'Artist' : 'Client'} · {isClient ? 'Your artist' : 'Your client'}</div>
+              </div>
+              <button type="button" className="btn btn-ghost btn-sm workspace-message-button" onClick={() => void handleMessageCounterparty()}>
+                <Icon name="chat" style={{ width: 14, height: 14 }} />
+                Message {isClient ? 'Artist' : 'Client'}
+              </button>
+            </div>
+            {realCommission.service_name_snapshot && (
+              <div className="workspace-service-meta">
+                <span>Service · {realCommission.service_name_snapshot}</span>
+                {realCommission.turnaround_days_snapshot !== null && realCommission.turnaround_days_snapshot !== undefined && (
+                  <span>Typical turnaround · {realCommission.turnaround_days_snapshot} days</span>
+                )}
+              </div>
+            )}
+            {(showAgreedPrice || showBudgetGuide || showProposedQuote || showEstimatedHours || showDeadlineSummary || realCommission.status === 'COMPLETED') && (
+              <div className="workspace-summary-metrics">
+                {showAgreedPrice && (
+                  <div className="workspace-summary-metric workspace-summary-metric-primary">
+                    <span>Agreed Price</span>
+                    <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
+                  </div>
+                )}
+                {showBudgetGuide && (
+                  <div className="workspace-summary-metric">
+                    <span>{isQuoteAwaitingClient ? 'Client Budget · Guide' : 'Client Budget'}</span>
+                    <strong>{formatDemoAmount(realCommission.client_budget!, realCommission.client_budget_currency!)}</strong>
+                  </div>
+                )}
+                {showProposedQuote && (
+                  <div className="workspace-summary-metric">
+                    <span>Proposed Price</span>
+                    <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
+                  </div>
+                )}
+                {showEstimatedHours && (
+                  <div className="workspace-summary-metric">
+                    <span>Estimated Work</span>
+                    <strong>{realCommission.estimated_working_hours} {realCommission.estimated_working_hours === 1 ? 'hour' : 'hours'}</strong>
+                  </div>
+                )}
+                {showDeadlineSummary && (
+                  <div className="workspace-summary-metric">
+                    <span>Target Deadline</span>
+                    <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
+                    {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
+                      <small className="c-danger">
+                        {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
+                      </small>
+                    ) : remainingMilliseconds === 0 ? (
+                      <small className="c-warning">Due now</small>
+                    ) : (
+                      <small>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</small>
+                    ))}
+                  </div>
+                )}
+                {realCommission.status === 'COMPLETED' && (
+                  <div className="workspace-summary-metric">
+                    <span>Completed</span>
+                    <strong>{formatCommissionDate(realCommission.completed_at) ?? 'Date not recorded'}</strong>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {showPaymentPanel && (
+            <section
+              className="card workspace-payment-card workspace-commission-payment-card ag-liquid-glass-soft"
+              aria-label="Commission payment"
+            >
+              <div className="row-between workspace-payment-card-header">
+                <span className="section-title">Payment</span>
+                <span className="badge badge-warning workspace-payment-chip">SIMULATED</span>
+              </div>
+              <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
+                {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
+              </div>
+              {!paymentLoading && commissionPayment?.status === 'REFUNDED' && commissionPayment.refunded_amount !== null && (
+                <div className="workspace-payment-refund">
+                  {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
+                  {commissionPayment.refunded_at && ` · ${formatCommissionDate(commissionPayment.refunded_at)}`}
+                </div>
+              )}
+              {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
+              {!paymentLoading && canRefundPayment && (
+                <div className="workspace-payment-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
+                    disabled={refundSubmitting || paymentActionLoading}
+                  >
+                    Refund payment
+                  </button>
+                </div>
+              )}
+              <p className="workspace-payment-disclosure">Simulated transaction. No real money is transferred.</p>
+            </section>
+          )}
+        </aside>
+
+        <main className="workspace-main-column">
         <section className="workspace-brief" aria-labelledby="workspace-brief-title">
           <h2 id="workspace-brief-title">Requirements / Brief</h2>
           <div className={`workspace-brief-description${!briefExpanded && (realCommission.description?.length ?? 0) > 500 ? ' is-collapsed' : ''}`}>
@@ -1740,18 +1764,21 @@ export function CommissionWorkspacePage() {
               </div>
               {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => deliverableFileRef.current?.click()} disabled={uploadingDeliverable}>
-                  {uploadingDeliverable ? 'Processing…' : 'Upload Deliverable'}
+                  {uploadingDeliverable ? 'Processing…' : 'Upload Artwork'}
                 </button>
               )}
             </div>
             <input ref={deliverableFileRef} type="file" accept="image/png,image/jpeg" style={{ display: 'none' }} onChange={(event) => void handleDeliverableSelected(event)} />
             {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
-              <div style={{ marginBottom: 10 }}>
-                <label className="field-label" htmlFor="deliverable-title">Title</label>
-                <input id="deliverable-title" className="input-field" value={deliverableTitle} onChange={(event) => setDeliverableTitle(event.target.value)} placeholder="Final character render" style={{ marginBottom: 8 }} />
-                <label className="field-label" htmlFor="deliverable-description">Description (optional)</label>
-                <textarea id="deliverable-description" className="textarea-field" rows={2} value={deliverableDescription} onChange={(event) => setDeliverableDescription(event.target.value)} placeholder="Describe this submission." style={{ marginBottom: 8 }} />
-              </div>
+              <details className="workspace-deliverable-metadata">
+                <summary>Add a title or note (optional)</summary>
+                <div>
+                  <label className="field-label" htmlFor="deliverable-title">Title (optional)</label>
+                  <input id="deliverable-title" className="input-field" value={deliverableTitle} onChange={(event) => setDeliverableTitle(event.target.value)} placeholder="Final character render" style={{ marginBottom: 8 }} />
+                  <label className="field-label" htmlFor="deliverable-description">Description (optional)</label>
+                  <textarea id="deliverable-description" className="textarea-field" rows={2} value={deliverableDescription} onChange={(event) => setDeliverableDescription(event.target.value)} placeholder="Describe this submission." style={{ marginBottom: 8 }} />
+                </div>
+              </details>
             )}
             {deliverablesLoading && <div className="t-xs c-low" role="status">Loading deliverables…</div>}
             {!deliverablesLoading && deliverablesError && <div className="t-xs c-danger" role="alert">{deliverablesError}</div>}
@@ -1784,42 +1811,31 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
-        {showPaymentPanel && (
-          <section
-            className="card workspace-payment-card workspace-commission-payment-card ag-liquid-glass-soft"
-            style={{ marginBottom: 16 }}
-            aria-label="Commission payment"
+        {['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status) && (
+          <div
+            id="commission-revisions"
+            hidden={!revisionSectionVisible
+              && !activeRevisionExists
+              && !revisionRequestsLoading
+              && !revisionRequestsError
+              && realCommission.status !== 'REVISION_REQUESTED'
+              && realCommission.status !== 'COMPLETED'}
           >
-            <div className="row-between workspace-payment-card-header">
-              <span className="section-title">Payment</span>
-              <span className="badge badge-warning workspace-payment-chip">SIMULATED</span>
-            </div>
-            <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
-              {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
-            </div>
-            {!paymentLoading && commissionPayment?.status === 'REFUNDED' && commissionPayment.refunded_amount !== null && (
-              <div className="workspace-payment-refund">
-                {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
-                {commissionPayment.refunded_at && ` · ${formatCommissionDate(commissionPayment.refunded_at)}`}
-              </div>
-            )}
-            {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
-            {!paymentLoading && canRefundPayment && (
-              <div className="workspace-payment-actions">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
-                  disabled={refundSubmitting || paymentActionLoading}
-                >
-                  Refund payment
-                </button>
-              </div>
-            )}
-            <p className="workspace-payment-disclosure">Simulated transaction. No real money is transferred.</p>
-          </section>
+            <RevisionRequests
+              commissionId={realCommission.id}
+              orderTitle={realCommission.title}
+              deliverableId={reviewDeliverableId}
+              refreshKey={revisionRefreshKey}
+              onCommissionChanged={refreshCommissionStatus}
+              readOnly={realCommission.status === 'COMPLETED'}
+              collapseResolved
+              onRevisionCountChange={handleRevisionCountChange}
+            />
+          </div>
         )}
 
+        </main>
+        <aside className="workspace-sidebar-secondary" aria-label="Additional transaction details">
         {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
           <section className="card workspace-progress-card" style={{ marginBottom: 16 }}>
             <div className="workspace-section-heading">
@@ -1867,29 +1883,6 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
-        {['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status) && (
-          <div
-            id="commission-revisions"
-            hidden={!revisionSectionVisible
-              && !activeRevisionExists
-              && !revisionRequestsLoading
-              && !revisionRequestsError
-              && realCommission.status !== 'REVISION_REQUESTED'
-              && realCommission.status !== 'COMPLETED'}
-          >
-            <RevisionRequests
-              commissionId={realCommission.id}
-              orderTitle={realCommission.title}
-              deliverableId={reviewDeliverableId}
-              refreshKey={revisionRefreshKey}
-              onCommissionChanged={refreshCommissionStatus}
-              readOnly={realCommission.status === 'COMPLETED'}
-              collapseResolved
-              onRevisionCountChange={handleRevisionCountChange}
-            />
-          </div>
-        )}
-
         <details className="workspace-history">
           <summary>Transaction History <span>{historyEvents.length} event{historyEvents.length === 1 ? '' : 's'}</span></summary>
           <ol className="workspace-history-list">
@@ -1904,6 +1897,8 @@ export function CommissionWorkspacePage() {
             ))}
           </ol>
         </details>
+          </aside>
+          </div>
         {completionDialogOpen && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !completionLoading && setCompletionDialogOpen(false)}>
             <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="complete-commission-title" onClick={(event) => event.stopPropagation()}>
@@ -2147,6 +2142,8 @@ export function CommissionWorkspacePage() {
         </div>
       }
     >
+      <div className="workspace-demo-layout">
+        <aside className="workspace-demo-sidebar" aria-label="Order details">
       <button
         type="button"
         className="tap-card row-between card workspace-summary-card workspace-counterparty ag-liquid-glass-soft"
@@ -2243,6 +2240,8 @@ export function CommissionWorkspacePage() {
         <p className="t-xs c-low">SIMULATED / DEMO ONLY. No real money is charged, held, released, or transferred.</p>
       </div>
 
+        </aside>
+        <main className="workspace-demo-main">
       <div className="row-between" style={{ marginBottom: 10 }}>
         <span className="section-title">Client Requirements</span>
       </div>
@@ -2266,6 +2265,8 @@ export function CommissionWorkspacePage() {
         <Icon name="upload" style={{ width: 16, height: 16 }} />
         Upload Milestone Artwork
       </button>
+        </main>
+      </div>
       <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} demoOnly />
       {toast}
     </ScreenShell>
