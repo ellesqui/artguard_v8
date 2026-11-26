@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRef } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -25,7 +25,11 @@ import { getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCom
 import { supabaseConfigurationStatus } from '../lib/supabase';
 import { formatDateOnly } from '../lib/commissionDeadline';
 import { getCommissionCompletionBlocker } from '../lib/commissionWorkflow';
-import { getInProgressCommissionNextAction } from '../lib/commissionWorkspacePresentation';
+import {
+  getInProgressCommissionNextAction,
+  isCommissionDeliverableImagePath,
+  shouldCollapsePaidPaymentPanel,
+} from '../lib/commissionWorkspacePresentation';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -209,6 +213,7 @@ export function CommissionWorkspacePage() {
   const [uploadingDeliverable, setUploadingDeliverable] = useState(false);
   const [deliverableTitle, setDeliverableTitle] = useState('');
   const [deliverableDescription, setDeliverableDescription] = useState('');
+  const [activeArtworkId, setActiveArtworkId] = useState<string | null>(null);
   const [reviewDeliverableId, setReviewDeliverableId] = useState<string | undefined>();
   const [revisionSectionVisible, setRevisionSectionVisible] = useState(false);
   const [approvingDeliverableId, setApprovingDeliverableId] = useState<string | null>(null);
@@ -263,6 +268,47 @@ export function CommissionWorkspacePage() {
     }
   }, [currentCommissionId]);
   const deliverableFileRef = useRef<HTMLInputElement>(null);
+  const artworkPreviewTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const isClientViewer = Boolean(realCommission && user && realCommission.client_id === user.id);
+  const visibleDeliverables = useMemo(
+    () => deliverables.filter((item) => !isClientViewer || ['SUBMITTED', 'APPROVED'].includes(item.status)),
+    [deliverables, isClientViewer],
+  );
+  const imageDeliverables = useMemo(
+    () => visibleDeliverables.filter((item) => isCommissionDeliverableImagePath(item.protected_storage_path)),
+    [visibleDeliverables],
+  );
+  const activeArtworkIndex = imageDeliverables.findIndex((item) => item.id === activeArtworkId);
+  const activeArtwork = activeArtworkIndex >= 0 ? imageDeliverables[activeArtworkIndex] : null;
+  const activeArtworkUrl = activeArtwork ? deliverableUrls[activeArtwork.id] : undefined;
+
+  useEffect(() => {
+    if (activeArtworkId && activeArtworkIndex < 0) setActiveArtworkId(null);
+  }, [activeArtworkId, activeArtworkIndex]);
+
+  useEffect(() => {
+    if (!activeArtwork || !activeArtworkUrl) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveArtworkId(null);
+      } else if (event.key === 'ArrowRight' && activeArtworkIndex < imageDeliverables.length - 1) {
+        setActiveArtworkId(imageDeliverables[activeArtworkIndex + 1].id);
+      } else if (event.key === 'ArrowLeft' && activeArtworkIndex > 0) {
+        setActiveArtworkId(imageDeliverables[activeArtworkIndex - 1].id);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeArtwork, activeArtworkIndex, activeArtworkUrl, imageDeliverables]);
+
+  useEffect(() => {
+    if (!activeArtworkId) artworkPreviewTriggerRef.current?.focus();
+  }, [activeArtworkId]);
 
   useEffect(() => {
     if (mockOrder || !orderId || !user) {
@@ -1054,7 +1100,6 @@ export function CommissionWorkspacePage() {
       && commissionPayment?.amount === realCommission.amount
       && commissionPayment?.currency === realCommission.currency;
     const paymentAvailable = hasCommissionPaymentPrice(realCommission);
-    const showPaymentPanel = realCommission.status === 'ACCEPTED' || commissionPayment !== null;
     const isPublicPostCommission = realCommission.public_post_id !== null;
     const requiresPaidPaymentBeforeStart = realCommission.service_id !== null
       || isPublicPostCommission
@@ -1100,6 +1145,13 @@ export function CommissionWorkspacePage() {
       && commissionPayment.provider === 'DEMO_SIMULATION'
       && commissionPayment.provider_reference === null
       && !commissionPayment.provider_verified_at;
+    const collapsePaidPaymentPanel = shouldCollapsePaidPaymentPanel({
+      matchingPaymentIsPaid,
+      canRefundPayment,
+      paymentStatus: commissionPayment?.status ?? null,
+    });
+    const showPaymentPanel = (realCommission.status === 'ACCEPTED' || commissionPayment !== null)
+      && !collapsePaidPaymentPanel;
     const paymentAmountMatchesCommission = realCommission.amount !== null
       && realCommission.amount !== undefined
       && commissionPayment?.amount === realCommission.amount
@@ -1670,32 +1722,82 @@ export function CommissionWorkspacePage() {
             )}
             {deliverablesLoading && <div className="t-xs c-low" role="status">Loading deliverables…</div>}
             {!deliverablesLoading && deliverablesError && <div className="t-xs c-danger" role="alert">{deliverablesError}</div>}
-            {!deliverablesLoading && !deliverablesError && deliverables.filter((item) => isClient ? ['SUBMITTED', 'APPROVED'].includes(item.status) : true).length === 0 && <div className="t-xs c-low">No deliverables submitted yet.</div>}
-            {!deliverablesLoading && !deliverablesError && deliverables.filter((item) => isClient ? ['SUBMITTED', 'APPROVED'].includes(item.status) : true).map((deliverable) => (
-              <article key={deliverable.id} className="workspace-deliverable-item">
-                {deliverableUrls[deliverable.id] && <ProtectedArtworkDisplay src={deliverableUrls[deliverable.id]} alt={`${deliverable.title} protected deliverable`} fitMode="contain" />}
-                <div className="row-between" style={{ marginTop: 8 }}>
-                  <span className="t-sm fw-700">{deliverable.title}</span>
-                  <span className={`badge ${deliverable.status === 'SUBMITTED' || deliverable.status === 'APPROVED' ? 'badge-success' : deliverable.status === 'FAILED' ? 'badge-danger' : 'badge-warning'}`}>{deliverable.status}</span>
-                </div>
-                {deliverable.description && <div className="t-xs c-mid" style={{ marginTop: 4 }}>{deliverable.description}</div>}
-                {deliverable.submitted_at && <div className="t-xs c-low" style={{ marginTop: 5 }}>Submitted {new Date(deliverable.submitted_at).toLocaleString()}</div>}
-                {deliverable.status === 'FAILED' && (
-                  <div className="t-xs c-danger" style={{ marginTop: 8 }}>
-                    This upload failed. Upload a new file to retry; failed attempts do not block completion.
-                  </div>
-                )}
-                {isClient && realCommission.status !== 'COMPLETED' && deliverable.status === 'SUBMITTED' && (
-                  <div className="row gap-10" style={{ marginTop: 10 }}>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setReviewDeliverableId(deliverable.id); setRevisionSectionVisible(true); }}>Request Revision</button>
-                    <button type="button" className="btn btn-primary btn-sm" disabled={approvingDeliverableId === deliverable.id} onClick={() => void handleApproveDeliverable(deliverable.id)}>
-                      {approvingDeliverableId === deliverable.id ? 'Approving…' : 'Approve Deliverable'}
-                    </button>
-                  </div>
-                )}
-                {deliverable.status === 'APPROVED' && <div className="t-xs c-success" style={{ marginTop: 8 }}>Deliverable Approved</div>}
-              </article>
-            ))}
+            {!deliverablesLoading && !deliverablesError && visibleDeliverables.length === 0 && <div className="t-xs c-low">No deliverables submitted yet.</div>}
+            {!deliverablesLoading && !deliverablesError && visibleDeliverables.length > 0 && (
+              <div className="workspace-deliverable-gallery">
+                {visibleDeliverables.map((deliverable) => {
+                  const signedUrl = deliverableUrls[deliverable.id];
+                  const isImage = isCommissionDeliverableImagePath(deliverable.protected_storage_path);
+                  return (
+                    <article key={deliverable.id} className="workspace-deliverable-item">
+                      {isImage && (
+                        signedUrl ? (
+                          <button
+                            type="button"
+                            className="workspace-deliverable-preview-button"
+                            onClick={(event) => {
+                              artworkPreviewTriggerRef.current = event.currentTarget;
+                              setActiveArtworkId(deliverable.id);
+                            }}
+                            aria-label={`Open ${deliverable.title} full preview`}
+                          >
+                            <ProtectedArtworkDisplay
+                              className="workspace-deliverable-thumbnail"
+                              src={signedUrl}
+                              alt={`${deliverable.title} artwork thumbnail`}
+                              fitMode="contain"
+                            />
+                          </button>
+                        ) : (
+                          <div className="workspace-deliverable-preview-unavailable" role="img" aria-label={`${deliverable.title} preview unavailable`}>
+                            Preview unavailable
+                          </div>
+                        )
+                      )}
+                      {!isImage && deliverable.protected_storage_path && (
+                        signedUrl ? (
+                          <a
+                            className="workspace-deliverable-file-tile"
+                            href={signedUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <span className="workspace-deliverable-file-icon" aria-hidden="true">FILE</span>
+                            <span>Open attachment</span>
+                          </a>
+                        ) : (
+                          <div className="workspace-deliverable-preview-unavailable">
+                            Attachment unavailable
+                          </div>
+                        )
+                      )}
+                      <div className="workspace-deliverable-details">
+                        <div className="row-between">
+                          <span className="t-sm fw-700 workspace-deliverable-title">{deliverable.title}</span>
+                          <span className={`badge ${deliverable.status === 'SUBMITTED' || deliverable.status === 'APPROVED' ? 'badge-success' : deliverable.status === 'FAILED' ? 'badge-danger' : 'badge-warning'}`}>{deliverable.status}</span>
+                        </div>
+                        {deliverable.description && <div className="t-xs c-mid workspace-deliverable-description">{deliverable.description}</div>}
+                        {deliverable.submitted_at && <div className="t-xs c-low workspace-deliverable-submitted">Submitted {new Date(deliverable.submitted_at).toLocaleString()}</div>}
+                        {deliverable.status === 'FAILED' && (
+                          <div className="t-xs c-danger workspace-deliverable-failure">
+                            This upload failed. Upload a new file to retry; failed attempts do not block completion.
+                          </div>
+                        )}
+                        {isClient && realCommission.status !== 'COMPLETED' && deliverable.status === 'SUBMITTED' && (
+                          <div className="row gap-10 workspace-deliverable-actions">
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setReviewDeliverableId(deliverable.id); setRevisionSectionVisible(true); }}>Request Revision</button>
+                            <button type="button" className="btn btn-primary btn-sm" disabled={approvingDeliverableId === deliverable.id} onClick={() => void handleApproveDeliverable(deliverable.id)}>
+                              {approvingDeliverableId === deliverable.id ? 'Approving…' : 'Approve Deliverable'}
+                            </button>
+                          </div>
+                        )}
+                        {deliverable.status === 'APPROVED' && <div className="t-xs c-success workspace-deliverable-approved">Deliverable Approved</div>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 
@@ -1755,7 +1857,10 @@ export function CommissionWorkspacePage() {
               <div className="workspace-summary-metrics">
                 {showAgreedPrice && (
                   <div className="workspace-summary-metric workspace-summary-metric-primary">
-                    <span>Agreed Price</span>
+                    <div className="workspace-agreed-price-label">
+                      <span>Agreed Price</span>
+                      {collapsePaidPaymentPanel && <span className="badge badge-success workspace-paid-badge" role="status">Paid</span>}
+                    </div>
                     <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
                   </div>
                 )}
@@ -1902,6 +2007,56 @@ export function CommissionWorkspacePage() {
           </aside>
           </div>
           </div>
+          {activeArtwork && activeArtworkUrl && (
+            <div
+              className="workspace-artwork-viewer-backdrop"
+              role="presentation"
+              onClick={() => setActiveArtworkId(null)}
+            >
+              <section
+                className="workspace-artwork-viewer"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="workspace-artwork-viewer-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="workspace-artwork-viewer-header">
+                  <button type="button" className="btn btn-ghost btn-sm" autoFocus onClick={() => setActiveArtworkId(null)}>
+                    Back to gallery
+                  </button>
+                  <h2 id="workspace-artwork-viewer-title">{activeArtwork.title}</h2>
+                  <button type="button" className="btn btn-ghost btn-sm" aria-label="Close artwork preview" onClick={() => setActiveArtworkId(null)}>
+                    Close
+                  </button>
+                </div>
+                <ProtectedArtworkDisplay
+                  className="workspace-artwork-viewer-image"
+                  src={activeArtworkUrl}
+                  alt={`${activeArtwork.title} full artwork preview`}
+                  fitMode="contain"
+                />
+                <div className="workspace-artwork-viewer-navigation">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setActiveArtworkId(imageDeliverables[activeArtworkIndex - 1].id)}
+                    disabled={activeArtworkIndex <= 0}
+                  >
+                    Previous
+                  </button>
+                  <span aria-live="polite">{activeArtworkIndex + 1} of {imageDeliverables.length}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setActiveArtworkId(imageDeliverables[activeArtworkIndex + 1].id)}
+                    disabled={activeArtworkIndex >= imageDeliverables.length - 1}
+                  >
+                    Next
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
         {completionDialogOpen && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !completionLoading && setCompletionDialogOpen(false)}>
             <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="complete-commission-title" onClick={(event) => event.stopPropagation()}>

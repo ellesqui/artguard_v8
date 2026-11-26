@@ -6,7 +6,11 @@ import {
   validateDirectCommissionQuote,
   validateOptionalCommissionBudget,
 } from '../src/lib/commissionWorkflow.ts';
-import { getInProgressCommissionNextAction } from '../src/lib/commissionWorkspacePresentation.ts';
+import {
+  getInProgressCommissionNextAction,
+  isCommissionDeliverableImagePath,
+  shouldCollapsePaidPaymentPanel,
+} from '../src/lib/commissionWorkspacePresentation.ts';
 
 test('completion requires an approved deliverable and ignores failed upload attempts only after approval', () => {
   assert.equal(getDeliverableCompletionBlocker([]), 'no-approved-deliverable');
@@ -147,4 +151,41 @@ test('Artist action takes priority when another work stage is awaiting Client re
   assert.match(action.description, /submit this stage when ready/i);
   assert.match(action.description, /Thumbnail is awaiting Client review/);
   assert.doesNotMatch(action.title, /Waiting for Client Review/);
+});
+
+test('only a matching paid payment without an available refund collapses the payment panel', () => {
+  assert.equal(shouldCollapsePaidPaymentPanel({
+    matchingPaymentIsPaid: true,
+    canRefundPayment: false,
+    paymentStatus: 'PAID',
+  }), true);
+  assert.equal(shouldCollapsePaidPaymentPanel({
+    matchingPaymentIsPaid: true,
+    canRefundPayment: true,
+    paymentStatus: 'PAID',
+  }), false);
+  for (const paymentStatus of ['PENDING', 'FAILED', 'REFUNDED', 'VOIDED']) {
+    assert.equal(shouldCollapsePaidPaymentPanel({
+      matchingPaymentIsPaid: false,
+      canRefundPayment: false,
+      paymentStatus,
+    }), false, `${paymentStatus} payment must keep the existing panel`);
+  }
+  assert.equal(shouldCollapsePaidPaymentPanel({
+    matchingPaymentIsPaid: false,
+    canRefundPayment: false,
+    paymentStatus: 'PAID',
+  }), false, 'an unverified PAID status must keep the existing panel');
+  assert.equal(shouldCollapsePaidPaymentPanel({
+    matchingPaymentIsPaid: false,
+    canRefundPayment: false,
+    paymentStatus: null,
+  }), false, 'an unavailable payment status must keep the existing panel');
+});
+
+test('deliverable preview classification recognizes image paths without treating other files as images', () => {
+  assert.equal(isCommissionDeliverableImagePath('artist/commissions/id/protected/final.png'), true);
+  assert.equal(isCommissionDeliverableImagePath('artist/commissions/id/protected/final.JPG'), true);
+  assert.equal(isCommissionDeliverableImagePath('artist/commissions/id/protected/final.pdf'), false);
+  assert.equal(isCommissionDeliverableImagePath(null), false);
 });

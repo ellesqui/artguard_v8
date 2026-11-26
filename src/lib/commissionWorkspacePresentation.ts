@@ -8,6 +8,20 @@ export interface CommissionWorkspaceNextAction {
   description: string;
 }
 
+export function shouldCollapsePaidPaymentPanel(input: {
+  matchingPaymentIsPaid: boolean;
+  canRefundPayment: boolean;
+  paymentStatus: string | null;
+}): boolean {
+  return input.paymentStatus === 'PAID'
+    && input.matchingPaymentIsPaid
+    && !input.canRefundPayment;
+}
+
+export function isCommissionDeliverableImagePath(path: string | null): boolean {
+  return /\.(?:png|jpe?g|gif|webp|avif)$/i.test(path ?? '');
+}
+
 export function getInProgressCommissionNextAction(input: {
   isArtist: boolean;
   isClient: boolean;
