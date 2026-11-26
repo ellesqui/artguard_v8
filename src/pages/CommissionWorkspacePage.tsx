@@ -176,6 +176,7 @@ export function CommissionWorkspacePage() {
   const { user } = useAuth();
   const { startConversation } = useChat();
   const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
+  const [briefExpanded, setBriefExpanded] = useState(false);
 
   // A route param that matches one of the hardcoded demo Orders always
   // renders the existing mock workspace below, unchanged. Anything else
@@ -987,6 +988,16 @@ export function CommissionWorkspacePage() {
     else showToast('Could not start the conversation. Please try again.');
   };
 
+  const handleCopyCommissionReference = async () => {
+    if (!realCommission) return;
+    try {
+      await navigator.clipboard.writeText(realCommission.order_ref);
+      showToast('Commission ID copied');
+    } catch {
+      showToast('Could not copy the commission ID.');
+    }
+  };
+
   if (!mockOrder) {
     if (realLoading) {
       return (
@@ -1158,46 +1169,184 @@ export function CommissionWorkspacePage() {
     const nextMilestoneIndex = activeMilestoneIndex >= 0
       ? activeMilestoneIndex
       : milestones.findIndex((milestone) => milestone.status === 'PENDING');
+    const isQuoteAwaitingArtist = realCommission.status === 'REQUESTED' && realCommission.quote_status === 'AWAITING_ARTIST';
+    const isQuoteAwaitingClient = realCommission.status === 'REQUESTED' && realCommission.quote_status === 'PENDING_CLIENT';
+    const hasBudgetGuide = realCommission.client_budget !== null
+      && realCommission.client_budget !== undefined
+      && Boolean(realCommission.client_budget_currency);
+    const hasProposedQuote = realCommission.proposed_amount !== null
+      && realCommission.proposed_amount !== undefined
+      && Boolean(realCommission.proposed_currency);
+    const showAgreedPrice = realCommission.amount !== null
+      && realCommission.amount !== undefined
+      && Boolean(realCommission.currency)
+      && !isQuoteAwaitingArtist
+      && !isQuoteAwaitingClient;
+    const showBudgetGuide = realCommission.status === 'REQUESTED'
+      && realCommission.quote_status !== 'ACCEPTED'
+      && hasBudgetGuide;
+    const showProposedQuote = isQuoteAwaitingClient && hasProposedQuote;
+    const showEstimatedHours = realCommission.estimated_working_hours !== null
+      && realCommission.estimated_working_hours !== undefined
+      && (isQuoteAwaitingClient || ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status));
+    const showDeadlineWithoutFallback = realCommission.status === 'REQUESTED'
+      || realCommission.status === 'CANCELLED'
+      || realCommission.status === 'REJECTED';
+    const showDeadlineSummary = Boolean(formatDateOnly(realCommission.target_deadline))
+      || ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status);
+    const canCancelCommission = (
+      isClient && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status)
+    ) || (
+      isArtist && ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status)
+    );
+    const submittedDeliverableExists = deliverables.some((deliverable) => deliverable.status === 'SUBMITTED');
+    const submittedMilestoneExists = milestones.some((milestone) => milestone.status === 'SUBMITTED');
+    const historyEvents: Array<{ label: string; timestamp: string | null }> = [];
+    const addHistoryEvent = (label: string, value: string | null | undefined, includeWithoutTimestamp = false) => {
+      const timestamp = formatDemoTimestamp(value);
+      if (timestamp || includeWithoutTimestamp) historyEvents.push({ label, timestamp });
+    };
+    addHistoryEvent('Request submitted', realCommission.requested_at);
+    if ((realCommission.quote_status === 'PENDING_CLIENT' || realCommission.quote_status === 'ACCEPTED') && hasProposedQuote) {
+      addHistoryEvent('Quote proposed', null, true);
+    }
+    if (realCommission.quote_status === 'ACCEPTED') {
+      addHistoryEvent('Quote accepted', realCommission.quote_accepted_at ?? realCommission.accepted_at, true);
+    } else {
+      addHistoryEvent(
+        'Commission accepted',
+        realCommission.accepted_at,
+        ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status),
+      );
+    }
+    if (matchingPaymentIsPaid) {
+      addHistoryEvent('Payment confirmed', commissionPayment?.demo_paid_at ?? commissionPayment?.paid_at, true);
+    }
+    addHistoryEvent(
+      'Work started',
+      realCommission.started_at,
+      ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status),
+    );
+    if (realCommission.status === 'COMPLETED' || realCommission.completed_at) {
+      addHistoryEvent('Work completed', realCommission.completed_at, realCommission.status === 'COMPLETED');
+    } else if (realCommission.status === 'CANCELLED' || realCommission.cancelled_at) {
+      addHistoryEvent('Commission cancelled', realCommission.cancelled_at, realCommission.status === 'CANCELLED');
+    } else if (realCommission.status === 'REJECTED' || realCommission.rejected_at) {
+      addHistoryEvent('Request rejected', realCommission.rejected_at, realCommission.status === 'REJECTED');
+    }
+
+    let nextStepTitle = 'Commission status';
+    let nextStepDescription = 'Review the commission details below.';
+    if (realCommission.status === 'REQUESTED') {
+      if (isQuoteAwaitingArtist) {
+        nextStepTitle = 'Awaiting Artist Quote';
+        nextStepDescription = isArtist
+          ? 'Review the brief and prepare a quote for the Client.'
+          : 'The Artist is preparing a quote. You can message them if you have questions.';
+      } else if (isQuoteAwaitingClient) {
+        nextStepTitle = isClient ? 'Review Artist Quote' : 'Waiting for Client to Review Quote';
+        nextStepDescription = isClient
+          ? 'Compare the proposed price and estimated work with your budget guide, then accept the quote if it works for you.'
+          : 'Your quote is ready. The Client needs to review and accept it before work can begin.';
+      } else {
+        nextStepTitle = 'Awaiting Artist Response';
+        nextStepDescription = 'The commission request is waiting for the Artist to respond.';
+      }
+    } else if (realCommission.status === 'ACCEPTED') {
+      nextStepTitle = isArtist
+        ? requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid ? 'Waiting for Simulated Payment' : 'Ready to Start Work'
+        : requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid ? 'Payment Required' : 'Waiting for Artist to Start';
+      nextStepDescription = isClient
+        ? requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
+          ? 'Confirm the simulated payment before work can begin.'
+          : 'Your Artist will start work when they are ready.'
+        : requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
+          ? 'The Client must confirm the simulated payment before you can start work.'
+          : 'Start work when you are ready to begin the commission.';
+    } else if (realCommission.status === 'IN_PROGRESS') {
+      if (completionReady && isClient) {
+        nextStepTitle = 'All Required Work Approved — Ready to Complete';
+        nextStepDescription = 'All deliverables, milestones, and revisions are clear. You can close the commission.';
+      } else if (submittedDeliverableExists && isClient) {
+        nextStepTitle = 'Artwork Submitted — Awaiting Your Review';
+        nextStepDescription = 'Review the submitted deliverable below and approve it or request a revision.';
+      } else if (submittedMilestoneExists) {
+        nextStepTitle = isClient ? 'Work Stage Awaiting Your Approval' : 'Work Stage Awaiting Client Approval';
+        nextStepDescription = isClient
+          ? 'Review the current work stage below and approve it when it meets the agreed requirements.'
+          : 'The Client needs to review the submitted work stage.';
+      } else if (isArtist) {
+        nextStepTitle = 'Work in Progress';
+        nextStepDescription = 'Continue updating progress, advancing milestones, and submitting deliverables below.';
+      } else {
+        nextStepTitle = 'Your Artist Is Working on This Commission';
+        nextStepDescription = 'Progress updates and work-stage reviews will appear below.';
+      }
+    } else if (realCommission.status === 'REVISION_REQUESTED') {
+      nextStepTitle = isArtist ? 'Revision Requested — Your Response Is Next' : 'Revision Requested — Waiting for Artist';
+      nextStepDescription = isArtist
+        ? 'Review the revision request and upload the revised artwork as a new deliverable.'
+        : 'The Artist is preparing revised artwork. You can review it when it is submitted.';
+    } else if (realCommission.status === 'COMPLETED') {
+      nextStepTitle = 'Commission Completed';
+      nextStepDescription = 'The commission is closed. Its deliverables and transaction history remain available.';
+    } else if (realCommission.status === 'CANCELLED') {
+      nextStepTitle = 'Commission Cancelled';
+      nextStepDescription = 'This commission is no longer active.';
+    } else if (realCommission.status === 'REJECTED') {
+      nextStepTitle = 'Commission Rejected';
+      nextStepDescription = 'This request is no longer active.';
+    }
 
     return (
       <ScreenShell
         contentClassName="commission-workspace-content"
         header={
-          <div className="px-hd row-between commission-workspace-header">
-            <div className="row gap-10">
+          <div className="px-hd row-between commission-workspace-header workspace-editorial-header">
+            <div className="row gap-10 workspace-header-main">
               <IconButton icon="chevron-l" onClick={() => navigate(-1)} ariaLabel="Back" />
-              <div>
-                <div className="t-md fw-700">{realCommission.title}</div>
-                <div className="t-xs c-low">{realCommission.order_ref}</div>
+              <div className="workspace-header-title">
+                <div className="workspace-header-heading">
+                  <h1>{realCommission.title}</h1>
+                  <span className={`badge ${realCommission.status === 'REQUESTED' || realCommission.status === 'REVISION_REQUESTED' ? 'badge-warning' : realCommission.status === 'REJECTED' || realCommission.status === 'CANCELLED' ? 'badge-danger' : realCommission.status === 'COMPLETED' ? 'badge-success' : 'badge-accent'}`}>
+                    {COMMISSION_STATUS_LABELS[realCommission.status]}
+                  </span>
+                </div>
+                <div className="workspace-reference">
+                  <span>{realCommission.order_ref}</span>
+                  <button type="button" className="workspace-copy-button" onClick={() => void handleCopyCommissionReference()} aria-label="Copy commission ID">
+                    Copy
+                  </button>
+                </div>
               </div>
-              {user && (
-                <OptionsMenu
-                  ariaLabel="Commission options"
-                  items={[{
+            </div>
+            {user && (
+              <OptionsMenu
+                ariaLabel="Commission options"
+                items={[
+                  ...(canCancelCommission ? [{
+                    label: cancellingCommission ? 'Cancelling…' : 'Cancel Commission',
+                    danger: true,
+                    onClick: () => {
+                      if (!cancellingCommission) openCancellationDialog();
+                    },
+                  }] : []),
+                  {
                     label: 'Report commission issue',
                     onClick: () => setReportTarget({
                       type: 'COMMISSION',
                       id: realCommission.id,
                       label: realCommission.order_ref,
                     }),
-                  }]}
-                />
-              )}
-            </div>
+                  },
+                ]}
+              />
+            )}
           </div>
         }
       >
-        <section className="card workspace-summary-card ag-liquid-glass-soft" style={{ marginBottom: 16, padding: '14px 16px' }}>
-          <div className="row-between" style={{ marginBottom: 12 }}>
-            <div style={{ minWidth: 0 }}>
-              <div className="section-title">Commission Overview</div>
-              <div className="t-xs c-low" style={{ marginTop: 3 }}>{realCommission.order_ref}</div>
-            </div>
-            <span className={`badge ${realCommission.status === 'REQUESTED' || realCommission.status === 'REVISION_REQUESTED' ? 'badge-warning' : realCommission.status === 'REJECTED' || realCommission.status === 'CANCELLED' ? 'badge-danger' : realCommission.status === 'COMPLETED' ? 'badge-success' : 'badge-accent'}`}>
-              {COMMISSION_STATUS_LABELS[realCommission.status]}
-            </span>
-          </div>
-          <div className="row gap-10 workspace-counterparty" style={{ alignItems: 'center' }}>
+        <section className="workspace-overview" aria-label="Commission summary">
+          <div className="row gap-10 workspace-counterparty">
             <div
               className="avatar avatar-sm"
               style={realCounterparty?.avatar_data_url ? { backgroundImage: `url(${realCounterparty.avatar_data_url})`, backgroundSize: 'cover' } : {}}
@@ -1208,177 +1357,247 @@ export function CommissionWorkspacePage() {
               <div className="t-sm fw-700">{realCounterparty?.name ?? 'Unknown'}</div>
               <div className="t-xs c-low">{isClient ? 'Artist' : 'Client'} · {isClient ? 'Your artist' : 'Your client'}</div>
             </div>
-            <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => void handleMessageCounterparty()}>
+            <button type="button" className="btn btn-ghost btn-sm workspace-message-button" onClick={() => void handleMessageCounterparty()}>
               <Icon name="chat" style={{ width: 14, height: 14 }} />
-              {isClient ? 'Message Artist' : 'Message Client'}
+              Message {isClient ? 'Artist' : 'Client'}
             </button>
           </div>
-          {((isClient && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status))
-            || (isArtist && ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status))) && (
-            <button type="button" className="btn btn-ghost btn-sm commission-cancel-button" style={{ marginTop: 10, color: 'var(--ag-danger)' }} onClick={openCancellationDialog} disabled={cancellingCommission}>
-              {cancellingCommission ? 'Cancelling…' : 'Cancel Commission'}
-            </button>
-          )}
-          <div className="workspace-summary-details" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '10px 18px', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-            <div><div className="t-xs c-low">Title</div><div className="t-sm fw-600">{realCommission.title}</div></div>
-            {realCommission.service_name_snapshot && <div><div className="t-xs c-low">Service</div><div className="t-sm c-mid">{realCommission.service_name_snapshot}</div></div>}
-            {realCommission.client_budget !== null && realCommission.client_budget_currency && <div><div className="t-xs c-low">Client budget · guide only</div><div className="t-sm c-mid">{formatDemoAmount(realCommission.client_budget, realCommission.client_budget_currency)}</div></div>}
-            {realCommission.proposed_amount !== null && realCommission.proposed_amount !== undefined && realCommission.proposed_currency && <div><div className="t-xs c-low">Proposed price</div><div className="t-sm c-mid">{formatDemoAmount(realCommission.proposed_amount, realCommission.proposed_currency)}</div></div>}
-            <div><div className="t-xs c-low">Agreed price</div><div className="t-sm c-mid">{realCommission.amount !== null && realCommission.amount !== undefined && realCommission.currency
-              ? `${realCommission.currency} ${realCommission.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-              : realCommission.quote_status === 'PENDING_CLIENT' ? 'Awaiting Client approval' : 'Not agreed'}</div></div>
-            <div><div className="t-xs c-low">Estimated working hours</div><div className="t-sm c-mid">{realCommission.estimated_working_hours !== null && realCommission.estimated_working_hours !== undefined ? `${realCommission.estimated_working_hours} hours` : 'Not provided'}</div></div>
-            {realCommission.turnaround_days_snapshot && <div><div className="t-xs c-low">Service turnaround estimate</div><div className="t-sm c-mid">{realCommission.turnaround_days_snapshot} days</div></div>}
-            {formatCommissionDate(realCommission.requested_at) && <div><div className="t-xs c-low">Requested</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.requested_at)}</div></div>}
-            {formatCommissionDate(realCommission.accepted_at) && <div><div className="t-xs c-low">Accepted</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.accepted_at)}</div></div>}
-            {formatCommissionDate(realCommission.started_at) && <div><div className="t-xs c-low">Started</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.started_at)}</div></div>}
-            <div>
-              <div className="t-xs c-low">Target Deadline</div>
-              {formatDateOnly(realCommission.target_deadline) ? (
-                <>
-                  <div className="t-sm c-mid">{formatDateOnly(realCommission.target_deadline)}</div>
-                  {isActiveDeadlineStatus && (deadlineOverdue ? (
-                    <div className="t-xs c-danger" style={{ marginTop: 3 }}>
-                      {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
-                    </div>
-                  ) : remainingMilliseconds === 0 ? (
-                    <div className="t-xs c-warning" style={{ marginTop: 3 }}>Due now</div>
-                  ) : (
-                    <div className="t-xs c-low" style={{ marginTop: 3 }}>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</div>
-                  ))}
-                </>
-              ) : (
-                <div className="t-sm c-mid">No deadline set</div>
+          {realCommission.service_name_snapshot && (
+            <div className="workspace-service-meta">
+              <span>Service · {realCommission.service_name_snapshot}</span>
+              {realCommission.turnaround_days_snapshot !== null && realCommission.turnaround_days_snapshot !== undefined && (
+                <span>Typical turnaround · {realCommission.turnaround_days_snapshot} days</span>
               )}
             </div>
-            {formatCommissionDate(realCommission.rejected_at) && <div><div className="t-xs c-low">Rejected</div><div className="t-sm c-danger">{formatCommissionDate(realCommission.rejected_at)}</div></div>}
-          </div>
-          {realCommission.status === 'REQUESTED' && (
-            <div className="t-xs c-warning" style={{ marginTop: 12 }}>
-              {realCommission.quote_status === 'AWAITING_ARTIST'
-                ? 'Waiting for the Artist to send a price quote.'
-                : realCommission.quote_status === 'PENDING_CLIENT'
-                  ? 'Review the Artist’s proposed price and estimated working hours below.'
-                  : 'Awaiting the artist’s response.'}
+          )}
+          {(showAgreedPrice || showBudgetGuide || showProposedQuote || showEstimatedHours || showDeadlineSummary || realCommission.status === 'COMPLETED') && (
+            <div className="workspace-summary-metrics">
+            {showAgreedPrice && (
+              <div className="workspace-summary-metric workspace-summary-metric-primary">
+                <span>Agreed Price</span>
+                <strong>{formatDemoAmount(realCommission.amount!, realCommission.currency!)}</strong>
+              </div>
+              )}
+            {showBudgetGuide && (
+              <div className="workspace-summary-metric">
+                <span>{isQuoteAwaitingClient ? 'Client Budget · Guide' : 'Client Budget'}</span>
+                <strong>{formatDemoAmount(realCommission.client_budget!, realCommission.client_budget_currency!)}</strong>
+              </div>
+            )}
+            {showProposedQuote && (
+              <div className="workspace-summary-metric">
+                <span>Proposed Price</span>
+                <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
+              </div>
+            )}
+            {showEstimatedHours && (
+              <div className="workspace-summary-metric">
+                <span>Estimated Work</span>
+                <strong>{realCommission.estimated_working_hours} {realCommission.estimated_working_hours === 1 ? 'hour' : 'hours'}</strong>
+              </div>
+            )}
+            {showDeadlineSummary && (
+              <div className="workspace-summary-metric">
+                <span>Target Deadline</span>
+                <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
+                {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
+                  <small className="c-danger">
+                    {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
+                  </small>
+                ) : remainingMilliseconds === 0 ? (
+                  <small className="c-warning">Due now</small>
+                ) : (
+                  <small>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</small>
+                ))}
+              </div>
+            )}
+            {realCommission.status === 'COMPLETED' && (
+              <div className="workspace-summary-metric">
+                <span>Completed</span>
+                <strong>{formatCommissionDate(realCommission.completed_at) ?? 'Date not recorded'}</strong>
+              </div>
+            )}
             </div>
           )}
-          {isClient && realCommission.status === 'REQUESTED' && realCommission.quote_status === 'PENDING_CLIENT' && (
-            <div className="card" style={{ marginTop: 12, padding: 12 }}>
-              <div className="t-sm fw-700">Artist quote</div>
-              <div className="t-xs c-low" style={{ marginTop: 4 }}>
-                This proposed price is separate from your budget guide. Estimated working hours are not a delivery-date guarantee. Cancel the request if you do not agree.
+        </section>
+
+        <section className="workspace-next-action" aria-labelledby="workspace-next-action-title">
+          <div className="workspace-next-action-copy">
+            <div className="workspace-eyebrow">Current stage · {COMMISSION_STATUS_LABELS[realCommission.status]}</div>
+            <h2 id="workspace-next-action-title">{nextStepTitle}</h2>
+            <p>{nextStepDescription}</p>
+            {realCommission.status === 'CANCELLED' && (
+              <div className="workspace-terminal-reason">
+                <strong>Cancellation reason</strong>
+                <span>{realCommission.cancellation_reason || 'No reason was provided.'}</span>
+                {realCommission.cancelled_by && <small>Cancelled by {realCommission.cancelled_by === realCommission.client_id ? 'Client' : 'Artist'}</small>}
               </div>
+            )}
+            {realCommission.status === 'REJECTED' && (
+              <div className="workspace-terminal-reason">
+                <strong>Rejection reason</strong>
+                <span>{realCommission.rejection_reason || 'No reason was provided.'}</span>
+              </div>
+            )}
+          </div>
+          <div className="workspace-next-action-controls">
+            {isClient && isQuoteAwaitingClient && (
+              <>
+                <div className="t-xs c-low workspace-action-note">
+                  This proposed price is separate from your budget guide. Estimated working hours are not a delivery-date guarantee.
+                </div>
+                <button type="button" className="btn btn-primary" disabled={acceptingQuote} onClick={() => void handleAcceptDirectQuote()}>
+                  {acceptingQuote ? 'Accepting…' : 'Accept Quote'}
+                </button>
+              </>
+            )}
+            {realCommission.status === 'ACCEPTED' && isClient && canStartDemoPayment && (
               <button
                 type="button"
-                className="btn btn-primary btn-sm"
-                style={{ marginTop: 10 }}
-                disabled={acceptingQuote}
-                onClick={() => void handleAcceptDirectQuote()}
+                className="btn btn-primary workspace-payment-pay-button"
+                onClick={openDemoPaymentConfirmation}
+                disabled={paymentActionLoading}
               >
-                {acceptingQuote ? 'Accepting…' : 'Accept Quote'}
+                Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
               </button>
-            </div>
-          )}
-          {realCommission.status === 'ACCEPTED' && <div className="t-xs c-success" style={{ marginTop: 12 }}>Commission request accepted.</div>}
-          {realCommission.status === 'REJECTED' && <div className="t-xs c-danger" style={{ marginTop: 8 }}>Commission request rejected{isClient && realCommission.rejection_reason ? `: ${realCommission.rejection_reason}` : '.'}</div>}
-          {realCommission.status === 'CANCELLED' && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-              <div className="section-title" style={{ marginBottom: 6 }}>Commission Cancelled</div>
-              {realCommission.cancelled_at && <div className="t-xs c-low">Cancelled {formatCommissionDate(realCommission.cancelled_at)}</div>}
-              {realCommission.cancelled_by && <div className="t-xs c-low" style={{ marginTop: 3 }}>Cancelled by {realCommission.cancelled_by === realCommission.client_id ? 'Client' : 'Artist'}</div>}
-              {realCommission.cancellation_reason && <div className="t-sm c-mid" style={{ marginTop: 8, lineHeight: 1.5 }}>{realCommission.cancellation_reason}</div>}
-            </div>
-          )}
-          {realCommission.status === 'COMPLETED' && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-              <div className="section-title" style={{ marginBottom: 6 }}>Commission Completed</div>
-              {realCommission.completed_at && <div className="t-xs c-success">Completed {formatCommissionDate(realCommission.completed_at)}</div>}
-              {isReviewEligibleClient && reviewCheckState === 'loading' && <div className="t-xs c-low" role="status" style={{ marginTop: 10 }}>Checking review status…</div>}
-              {isReviewEligibleClient && reviewCheckState === 'error' && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="t-xs c-danger" role="alert">Could not check review status.</div>
-                  <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setReviewCheckRetry((retry) => retry + 1)}>Try again</button>
-                </div>
-              )}
-              {isReviewEligibleClient && reviewCheckState === 'ready' && commissionReview && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="t-sm fw-700 c-success">Review Submitted</div>
-                  {commissionReview.edited_at && <div className="t-xs c-low" style={{ marginTop: 4 }}>Edited</div>}
-                  <div className="row gap-8" aria-label={`Rating: ${commissionReview.rating} out of 5`} style={{ marginTop: 6 }}>
-                    {[1, 2, 3, 4, 5].map((rating) => (
-                      <Icon key={rating} name="star" style={{ width: 14, height: 14, stroke: 'none', fill: rating <= commissionReview.rating ? 'var(--ag-amber)' : 'var(--ag-border)' }} />
-                    ))}
+            )}
+            {realCommission.status === 'ACCEPTED' && isArtist && (
+              <>
+                {isPublicPostCommission && <div className="t-xs c-low workspace-action-note">Payment is required before work can begin.</div>}
+                {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid && (
+                  <div className="t-xs c-low workspace-action-note">
+                    {paymentError
+                      ? 'Could not verify payment status.'
+                      : paymentLoading || !paymentStatusKnown
+                        ? 'Checking payment status before start…'
+                        : !paymentAvailable
+                          ? 'Commission price unavailable. Contact support.'
+                          : 'Payment required before starting this commission.'}
                   </div>
-                  <div className="t-sm c-mid" style={{ marginTop: 6, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{commissionReview.review_text}</div>
-                  {reviewEditEligible && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      style={{ marginTop: 10 }}
-                      onClick={() => {
-                        setReviewEditing(true);
-                        setReviewRating(commissionReview.rating);
-                        setReviewText(commissionReview.review_text);
-                        setReviewSubmitError(undefined);
-                        setReviewDialogOpen(true);
-                      }}
-                    >
-                      Edit Review
-                    </button>
-                  )}
-                </div>
-              )}
-              {isReviewEligibleClient && reviewCheckState === 'ready' && !commissionReview && (
-                <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={() => setReviewDialogOpen(true)}>
-                  Leave a Review
+                )}
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void handleStartCommission()}
+                  disabled={startingCommission || (requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid)}
+                >
+                  {startingCommission ? 'Starting…' : 'Start Commission'}
                 </button>
-              )}
-            </div>
-          )}
-          {isClient && !['COMPLETED', 'CANCELLED'].includes(realCommission.status) && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-              {completionReady ? (
-                <button type="button" className="btn btn-secondary btn-sm commission-complete-button" onClick={() => setCompletionDialogOpen(true)} disabled={completionLoading}>
-                  Complete Commission
-                </button>
-              ) : (
-                <div className="t-xs c-low">
-                  {completionBlocker === 'deliverables-loading'
-                    ? 'Checking deliverables…'
-                    : completionBlocker === 'milestones-loading'
-                      ? 'Checking milestones…'
-                      : completionBlocker === 'revisions-loading'
-                        ? 'Checking revision status…'
-                        : completionBlocker === 'deliverables-unavailable'
-                          ? 'Deliverables could not be verified. Retry before completing.'
-                          : completionBlocker === 'milestones-unavailable'
-                            ? 'Milestones could not be verified. Retry before completing.'
-                            : completionBlocker === 'revisions-unavailable'
-                              ? 'Revision status could not be verified. Retry before completing.'
-                              : completionBlocker === 'no-approved-deliverable'
-                                ? 'No approved final deliverable yet.'
-                                : completionBlocker === 'deliverables-awaiting-review'
-                                  ? 'One or more deliverables are still awaiting review.'
-                                  : completionBlocker === 'milestones-incomplete'
-                                    ? 'Complete all milestones before completing.'
-                                    : completionBlocker === 'revisions-unresolved'
-                                      ? 'Revisions are still unresolved.'
-                                      : 'Commission must be in progress before it can be completed.'}
+                {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void refreshPaymentStatus()} disabled={paymentLoading}>
+                    {paymentLoading ? 'Checking…' : 'Refresh payment status'}
+                  </button>
+                )}
+              </>
+            )}
+            {isClient && ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status) && (
+              <>
+                {completionReady ? (
+                  <button type="button" className="btn btn-primary commission-complete-button" onClick={() => setCompletionDialogOpen(true)} disabled={completionLoading}>
+                    Complete Commission
+                  </button>
+                ) : (
+                  <div className="t-xs c-low workspace-action-note">
+                    {completionBlocker === 'deliverables-loading'
+                      ? 'Checking deliverables…'
+                      : completionBlocker === 'milestones-loading'
+                        ? 'Checking milestones…'
+                        : completionBlocker === 'revisions-loading'
+                          ? 'Checking revision status…'
+                          : completionBlocker === 'deliverables-unavailable'
+                            ? 'Deliverables could not be verified. Retry before completing.'
+                            : completionBlocker === 'milestones-unavailable'
+                              ? 'Milestones could not be verified. Retry before completing.'
+                              : completionBlocker === 'revisions-unavailable'
+                                ? 'Revision status could not be verified. Retry before completing.'
+                                : completionBlocker === 'no-approved-deliverable'
+                                  ? 'No approved final deliverable yet.'
+                                  : completionBlocker === 'deliverables-awaiting-review'
+                                    ? 'One or more deliverables are still awaiting review.'
+                                    : completionBlocker === 'milestones-incomplete'
+                                      ? 'Complete all milestones before completing.'
+                                      : completionBlocker === 'revisions-unresolved'
+                                        ? 'Revisions are still unresolved.'
+                                        : 'Commission must be in progress before it can be completed.'}
+                  </div>
+                )}
+                {completionError && <div className="t-xs c-danger" role="alert">{completionError}</div>}
+                {revisionRequestsError && (
+                  <div className="t-xs c-danger" role="alert">
+                    Revision status could not be verified. {revisionRequestsError}
+                    <button type="button" className="link-sm" onClick={() => setRevisionRefreshKey((current) => current + 1)}>Retry</button>
+                  </div>
+                )}
+              </>
+            )}
+            {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'loading' && (
+              <div className="t-xs c-low" role="status">Checking review status…</div>
+            )}
+            {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'error' && (
+              <div>
+                <div className="t-xs c-danger" role="alert">Could not check review status.</div>
+                <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setReviewCheckRetry((retry) => retry + 1)}>Try again</button>
+              </div>
+            )}
+            {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'ready' && commissionReview && (
+              <div className="workspace-review-summary">
+                <div className="t-sm fw-700 c-success">Review Submitted</div>
+                {commissionReview.edited_at && <div className="t-xs c-low" style={{ marginTop: 4 }}>Edited</div>}
+                <div className="row gap-8" aria-label={`Rating: ${commissionReview.rating} out of 5`} style={{ marginTop: 6 }}>
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <Icon key={rating} name="star" style={{ width: 14, height: 14, stroke: 'none', fill: rating <= commissionReview.rating ? 'var(--ag-amber)' : 'var(--ag-border)' }} />
+                  ))}
                 </div>
-              )}
-              {completionError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>{completionError}</div>}
-              {revisionRequestsError && (
-                <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>
-                  Revision status could not be verified. {revisionRequestsError}
-                  <button type="button" className="link-sm" onClick={() => setRevisionRefreshKey((current) => current + 1)}>Retry</button>
-                </div>
-              )}
-            </div>
-          )}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-            <div className="section-title" style={{ marginBottom: 6 }}>Requirements / Brief</div>
-            <div className="t-sm c-mid" style={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{realCommission.description || 'No requirements provided yet.'}</div>
+                <div className="t-sm c-mid" style={{ marginTop: 6, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{commissionReview.review_text}</div>
+                {reviewEditEligible && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginTop: 10 }}
+                    onClick={() => {
+                      setReviewEditing(true);
+                      setReviewRating(commissionReview.rating);
+                      setReviewText(commissionReview.review_text);
+                      setReviewSubmitError(undefined);
+                      setReviewDialogOpen(true);
+                    }}
+                  >
+                    Edit Review
+                  </button>
+                )}
+              </div>
+            )}
+            {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'ready' && !commissionReview && (
+              <button type="button" className="btn btn-primary" onClick={() => setReviewDialogOpen(true)}>Leave a Review</button>
+            )}
           </div>
+        </section>
+
+        <details className="workspace-history">
+          <summary>Transaction History <span>{historyEvents.length} event{historyEvents.length === 1 ? '' : 's'}</span></summary>
+          <ol className="workspace-history-list">
+            {historyEvents.map((event, index) => (
+              <li key={`${event.label}-${index}`}>
+                <span className="workspace-history-marker" aria-hidden="true" />
+                <div>
+                  <strong>{event.label}</strong>
+                  <time>{event.timestamp ?? 'Date not recorded'}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </details>
+
+        <section className="workspace-brief" aria-labelledby="workspace-brief-title">
+          <h2 id="workspace-brief-title">Requirements / Brief</h2>
+          <div className={`workspace-brief-description${!briefExpanded && (realCommission.description?.length ?? 0) > 500 ? ' is-collapsed' : ''}`}>
+            {realCommission.description || 'No requirements provided yet.'}
+          </div>
+          {(realCommission.description?.length ?? 0) > 500 && (
+            <button type="button" className="btn btn-ghost btn-sm workspace-show-more" onClick={() => setBriefExpanded((expanded) => !expanded)}>
+              Show {briefExpanded ? 'Less' : 'More'}
+            </button>
+          )}
         </section>
 
         {showPaymentPanel && (
@@ -1412,16 +1631,6 @@ export function CommissionWorkspacePage() {
             {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
             {!paymentLoading && (
               <div className="workspace-payment-actions">
-                {canStartDemoPayment && (
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm workspace-payment-pay-button"
-                    onClick={openDemoPaymentConfirmation}
-                    disabled={paymentActionLoading}
-                  >
-                    Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
-                  </button>
-                )}
                 {canRefundPayment && (
                   <button
                     type="button"
@@ -1438,62 +1647,12 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
-        {realCommission.status === 'ACCEPTED' && (
-          <div className="card" style={{ marginBottom: 16 }}>
-            {isClient ? (
-              <div className="t-sm c-mid">Waiting for the artist to start work.</div>
-            ) : (
-              <>
-                <div className="section-title" style={{ marginBottom: 8 }}>Ready to begin?</div>
-                {isPublicPostCommission && (
-                  <div className="t-xs c-low" style={{ marginBottom: 8 }}>
-                    Payment is required before work can begin.
-                  </div>
-                )}
-                {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid && (
-                  <div className="t-xs c-low" style={{ marginBottom: 8 }}>
-                    {paymentError
-                      ? 'Could not verify payment status.'
-                      : paymentLoading || !paymentStatusKnown
-                        ? 'Checking payment status before start…'
-                        : !paymentAvailable
-                          ? 'Commission price unavailable. Contact support.'
-                          : 'Payment required before starting this commission.'}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => void handleStartCommission()}
-                  disabled={startingCommission || (requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid)}
-                >
-                  {startingCommission ? 'Starting…' : 'Start Commission'}
-                </button>
-                {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ marginTop: 8 }}
-                    onClick={() => void refreshPaymentStatus()}
-                    disabled={paymentLoading}
-                  >
-                    {paymentLoading ? 'Checking…' : 'Refresh payment status'}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {(realCommission.status === 'ACCEPTED' || realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
+        {(realCommission.status === 'ACCEPTED' || realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
           <section className="card workspace-milestone-card ag-liquid-glass-soft" style={{ marginBottom: 16 }}>
-            <div className="row-between" style={{ marginBottom: 12 }}>
-              <span className="section-title">Work Stages</span>
-              {progressUpdates[0] && <span className="badge badge-accent">{progressUpdates[0].progress_percent}%</span>}
+            <div className="workspace-section-heading">
+              <h2>Work Stages</h2>
+              <p>Milestone approval is separate from final deliverable approval.</p>
             </div>
-            <p className="t-xs c-low" style={{ margin: '0 0 12px', lineHeight: 1.5 }}>
-              Formal stages track client reviews. Progress updates are informational and do not replace submitted work.
-            </p>
             {realCommission.status === 'REVISION_REQUESTED' && (
               <p className="t-xs c-warning" style={{ margin: '0 0 12px', lineHeight: 1.5 }}>
                 {isArtist
@@ -1560,8 +1719,8 @@ export function CommissionWorkspacePage() {
                               </button>
                             </div>
                           )}
-                          {isArtist && milestone.status === 'SUBMITTED' && <div className="t-xs c-low" style={{ marginTop: 8 }}>Awaiting client approval</div>}
-                          {isClient && milestone.status === 'SUBMITTED' && (
+                          {isArtist && realCommission.status !== 'COMPLETED' && milestone.status === 'SUBMITTED' && <div className="t-xs c-low" style={{ marginTop: 8 }}>Awaiting client approval</div>}
+                          {isClient && realCommission.status !== 'COMPLETED' && milestone.status === 'SUBMITTED' && (
                             <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => void handleApproveMilestone(milestone.id)} disabled={milestoneActionId !== null}>
                               {milestoneActionId === milestone.id ? 'Approving…' : 'Approve'}
                             </button>
@@ -1574,43 +1733,60 @@ export function CommissionWorkspacePage() {
                 </div>
               </div>
             )}
-        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
-          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--ag-border-soft)' }}>
-            <div className="t-xs c-low" style={{ marginBottom: 8 }}>Latest update</div>
-            {progressUpdates[0] && <div className="t-sm c-mid" style={{ marginBottom: 10 }}>{progressUpdates[0].progress_percent}% · &quot;{progressUpdates[0].note}&quot; <span className="t-xs c-low">{new Date(progressUpdates[0].created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span></div>}
-            {progressLoading && <div className="t-xs c-low" role="status">Loading progress…</div>}
-            {!progressLoading && progressError && <div className="t-xs c-danger" role="alert">{progressError}</div>}
-            {!progressLoading && !progressError && progressUpdates.length === 0 && <div className="t-xs c-low">No progress updates yet.</div>}
-            {!progressLoading && !progressError && progressUpdates.length > 1 && <div className="t-xs c-low" style={{ marginBottom: 6 }}>Progress history</div>}
-            {!progressLoading && !progressError && progressUpdates.slice(1).map((update) => (
-              <div key={update.id} style={{ padding: '8px 0', borderTop: '1px solid var(--ag-border-soft)' }}>
-                <div className="row-between gap-10">
-                  <span className="t-sm fw-700">{update.progress_percent}%</span>
-                  <span className="t-xs c-low">{new Date(update.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                </div>
-                <div className="t-xs c-mid" style={{ marginTop: 4, lineHeight: 1.5 }}>{update.note}</div>
-              </div>
-            ))}
-            {isArtist && realCommission.status === 'IN_PROGRESS' && (
-              <form onSubmit={(event) => void handlePostProgress(event)} style={{ marginTop: 10, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
-                <label className="field-label" htmlFor="progress-percent">Progress</label>
-                <input id="progress-percent" className="input-field" type="number" min="0" max="100" step="1" value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} style={{ marginBottom: 10 }} />
-                <label className="field-label" htmlFor="progress-note">Update</label>
-                <textarea id="progress-note" className="textarea-field" rows={3} value={progressNote} onChange={(event) => setProgressNote(event.target.value)} placeholder="Describe the latest work update." style={{ marginBottom: 10 }} />
-                <button type="submit" className="btn btn-secondary" disabled={postingProgress}>{postingProgress ? 'Posting…' : 'Post Progress Update'}</button>
-              </form>
-            )}
-          </div>
-        )}
           </section>
         )}
 
-        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'ACCEPTED') && (
-          <section className="card" style={{ marginBottom: 16 }}>
-            <div className="row-between" style={{ marginBottom: 10 }}>
-              <span className="section-title">Commission Deliverables</span>
+        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
+          <section className="card workspace-progress-card" style={{ marginBottom: 16 }}>
+            <div className="workspace-section-heading">
+              <h2>Progress Updates</h2>
+              <p>Informational updates do not replace formal milestone or deliverable approval.</p>
+            </div>
+            {progressUpdates[0] && (
+              <div className="workspace-latest-progress">
+                <strong>{progressUpdates[0].progress_percent}% complete</strong>
+                <p>{progressUpdates[0].note}</p>
+                <time>{new Date(progressUpdates[0].created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
+              </div>
+            )}
+            {progressLoading && <div className="t-xs c-low" role="status">Loading progress…</div>}
+            {!progressLoading && progressError && <div className="t-xs c-danger" role="alert">{progressError}</div>}
+            {!progressLoading && !progressError && progressUpdates.length === 0 && <div className="t-sm c-low">No progress updates yet.</div>}
+            {!progressLoading && !progressError && progressUpdates.length > 1 && (
+              <div className="workspace-progress-history">
+                <h3>Earlier updates</h3>
+                {progressUpdates.slice(1).map((update) => (
+                  <article key={update.id}>
+                    <div className="row-between gap-10">
+                      <strong>{update.progress_percent}%</strong>
+                      <time>{new Date(update.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
+                    </div>
+                    <p>{update.note}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+            {isArtist && realCommission.status === 'IN_PROGRESS' && (
+              <form onSubmit={(event) => void handlePostProgress(event)} className="workspace-progress-form">
+                <label className="field-label" htmlFor="progress-percent">Progress</label>
+                <input id="progress-percent" className="input-field" type="number" min="0" max="100" step="1" value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} />
+                <label className="field-label" htmlFor="progress-note">Update</label>
+                <textarea id="progress-note" className="textarea-field" rows={3} value={progressNote} onChange={(event) => setProgressNote(event.target.value)} placeholder="Describe the latest work update." />
+                <button type="submit" className="btn btn-secondary" disabled={postingProgress}>{postingProgress ? 'Posting…' : 'Post Progress Update'}</button>
+              </form>
+            )}
+          </section>
+        )}
+
+        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'ACCEPTED' || realCommission.status === 'COMPLETED') && (
+          <section id="commission-deliverables" className="card workspace-deliverables" style={{ marginBottom: 16 }}>
+            <div className="row-between workspace-section-heading">
+              <div>
+                <h2>Artist Deliverables</h2>
+                <p>Original requirements are above. Submitted artwork and its review state appear here.</p>
+              </div>
               {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => deliverableFileRef.current?.click()} disabled={uploadingDeliverable}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => deliverableFileRef.current?.click()} disabled={uploadingDeliverable}>
                   {uploadingDeliverable ? 'Processing…' : 'Upload Deliverable'}
                 </button>
               )}
@@ -1628,7 +1804,7 @@ export function CommissionWorkspacePage() {
             {!deliverablesLoading && deliverablesError && <div className="t-xs c-danger" role="alert">{deliverablesError}</div>}
             {!deliverablesLoading && !deliverablesError && deliverables.filter((item) => isClient ? ['SUBMITTED', 'APPROVED'].includes(item.status) : true).length === 0 && <div className="t-xs c-low">No deliverables submitted yet.</div>}
             {!deliverablesLoading && !deliverablesError && deliverables.filter((item) => isClient ? ['SUBMITTED', 'APPROVED'].includes(item.status) : true).map((deliverable) => (
-              <article key={deliverable.id} style={{ borderTop: '1px solid var(--ag-border-soft)', paddingTop: 10, marginTop: 10 }}>
+              <article key={deliverable.id} className="workspace-deliverable-item">
                 {deliverableUrls[deliverable.id] && <ProtectedArtworkDisplay src={deliverableUrls[deliverable.id]} alt={`${deliverable.title} protected deliverable`} fitMode="contain" />}
                 <div className="row-between" style={{ marginTop: 8 }}>
                   <span className="t-sm fw-700">{deliverable.title}</span>
@@ -1641,7 +1817,7 @@ export function CommissionWorkspacePage() {
                     This upload failed. Upload a new file to retry; failed attempts do not block completion.
                   </div>
                 )}
-                {isClient && deliverable.status === 'SUBMITTED' && (
+                {isClient && realCommission.status !== 'COMPLETED' && deliverable.status === 'SUBMITTED' && (
                   <div className="row gap-10" style={{ marginTop: 10 }}>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setReviewDeliverableId(deliverable.id); setRevisionSectionVisible(true); }}>Request Revision</button>
                     <button type="button" className="btn btn-primary btn-sm" disabled={approvingDeliverableId === deliverable.id} onClick={() => void handleApproveDeliverable(deliverable.id)}>
