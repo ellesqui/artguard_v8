@@ -21,7 +21,7 @@ import { listArtistReviews, submitArtistReview, updateArtistReview, type ArtistR
 import { approveCommissionDeliverable, createCommissionDeliverableSignedUrl, listCommissionDeliverables, uploadCommissionDeliverable, type CommissionDeliverable } from '../lib/supabaseDeliverables';
 import { approveCommissionMilestone, createDefaultCommissionMilestones, listCommissionMilestones, startCommissionMilestone, submitCommissionMilestone, type CommissionMilestone } from '../lib/supabaseMilestones';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
-import { createCommissionPayment, getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
+import { getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
 import { supabaseConfigurationStatus } from '../lib/supabase';
 
 const STATUS_DOT_STYLE = {
@@ -716,53 +716,17 @@ export function CommissionWorkspacePage() {
     ) return;
 
     const requestedCommissionId = realCommission.id;
-    let failureStage = 'pending-payment-validation';
+    let failureStage = 'demo-payment-rpc';
     paymentActionInFlight.current = true;
     setPaymentActionLoading(true);
     setDemoPaymentDialogStep('processing');
     setPaymentError(undefined);
     try {
-      let payment = commissionPayment;
-      if (!payment || payment.status === 'FAILED') {
-        failureStage = 'payment-creation';
-        payment = await createCommissionPayment(realCommission.id);
-        if (activeOrderId.current !== requestedCommissionId) return;
-      }
-
-      failureStage = 'pending-payment-validation';
-      if (
-        payment.commission_id !== requestedCommissionId
-        || payment.payer_id !== user.id
-        || payment.payee_id !== realCommission.artist_id
-        || payment.amount !== realCommission.amount
-        || payment.currency !== realCommission.currency
-      ) {
-        throw new Error('This payment does not match the commission.');
-      }
-      if (payment.status === 'PAID' && (
-        !payment.demo_paid_at
-        || payment.provider !== 'DEMO_SIMULATION'
-        || payment.provider_verified_at
-      )) {
-        throw new Error('This payment is not available for demo simulation.');
-      }
-      if (payment.status !== 'PENDING' && payment.status !== 'PAID') {
-        throw new Error('Only pending or completed demo payments can be verified.');
-      }
-      if (payment.provider && payment.provider !== 'DEMO_SIMULATION') {
-        throw new Error('Provider payment records cannot use demo simulation.');
-      }
-      if (payment.provider_reference !== null || payment.provider_verified_at) {
-        throw new Error('Provider payment records cannot use demo simulation.');
-      }
-
-      failureStage = 'demo-payment-rpc';
-      const simulatedPayment = await simulateCommissionPaymentDemoSuccess(payment.id);
+      const simulatedPayment = await simulateCommissionPaymentDemoSuccess(realCommission.id);
       if (activeOrderId.current !== requestedCommissionId) return;
       failureStage = 'returned-payment-validation';
       if (
-        simulatedPayment.id !== payment.id
-        || simulatedPayment.commission_id !== realCommission.id
+        simulatedPayment.commission_id !== realCommission.id
         || simulatedPayment.payer_id !== user.id
         || simulatedPayment.payee_id !== realCommission.artist_id
         || simulatedPayment.amount !== realCommission.amount
@@ -776,7 +740,10 @@ export function CommissionWorkspacePage() {
         throw new Error('The saved demo payment could not be verified.');
       }
       setCommissionPayment(simulatedPayment);
+      setPaymentStatusCommissionId(requestedCommissionId);
       setDemoPaymentDialogStep('receipt');
+      setDemoPaymentConfirmOpen(false);
+      setDemoPaymentDialogCommissionId(null);
       showToast('Demo payment successful. No real money was charged or transferred.');
     } catch (error) {
       if (activeOrderId.current !== requestedCommissionId) return;

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { netCommissionPaymentAmount } from './commissionPaymentAccounting';
 
 export type CommissionPaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED' | 'VOIDED';
 
@@ -19,22 +20,6 @@ export interface CommissionPayment {
   refunded_at: string | null;
   refunded_amount: number | null;
   created_by: string;
-}
-
-export type DemoEarningsCategory = 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
-
-export interface DemoCommissionEarning {
-  payment_id: string;
-  commission_id: string;
-  client_name: string;
-  commission_title: string;
-  amount: number;
-  currency: string;
-  payment_status: CommissionPaymentStatus;
-  paid_at: string | null;
-  refunded_at: string | null;
-  commission_status: string;
-  earnings_category: DemoEarningsCategory;
 }
 
 function readPayment(data: unknown): CommissionPayment {
@@ -64,19 +49,20 @@ export async function listMyPaidCommissionPayments(
   const partyColumn = role === 'artist' ? 'payee_id' : 'payer_id';
   const { data, error } = await supabase
     .from('commission_payments')
-    .select('*')
+    .select('*, commission:commissions!commission_payments_commission_id_fkey!inner(status)')
     .eq(partyColumn, userId)
     .eq('status', 'PAID')
+    .neq('commission.status', 'CANCELLED')
     .order('paid_at', { ascending: false });
   if (error) throw error;
-  return ((data ?? []) as CommissionPayment[]).filter((payment) => Boolean(payment.provider_verified_at));
-}
-
-export async function listMyDemoCommissionEarnings(): Promise<DemoCommissionEarning[]> {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const { data, error } = await supabase.rpc('list_my_demo_commission_earnings');
-  if (error) throw error;
-  return (data ?? []) as DemoCommissionEarning[];
+  return ((data ?? []) as CommissionPayment[]).filter((payment) => {
+    const isEligiblePayment = Boolean(payment.provider_verified_at)
+      || (
+        payment.provider === 'DEMO_SIMULATION'
+        && Boolean(payment.demo_paid_at)
+      );
+    return isEligiblePayment && netCommissionPaymentAmount(payment) > 0;
+  });
 }
 
 export async function createCommissionPayment(commissionId: string): Promise<CommissionPayment> {
@@ -88,10 +74,10 @@ export async function createCommissionPayment(commissionId: string): Promise<Com
   return readPayment(data);
 }
 
-export async function simulateCommissionPaymentDemoSuccess(paymentId: string): Promise<CommissionPayment> {
+export async function simulateCommissionPaymentDemoSuccess(commissionId: string): Promise<CommissionPayment> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.rpc('simulate_commission_payment_demo_success', {
-    p_payment_id: paymentId,
+    p_commission_id: commissionId,
   });
   if (error) throw error;
   return readPayment(data);

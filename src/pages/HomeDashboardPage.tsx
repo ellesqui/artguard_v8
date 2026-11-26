@@ -10,7 +10,8 @@ import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { initialsFor } from '../lib/supabaseData';
 import { acceptCommissionRequest, getCommissionDueAt, listCommissionProgress, listMyCommissions, rejectCommissionRequest, type MyCommission } from '../lib/supabaseRevisions';
-import { listMyDemoCommissionEarnings, listMyPaidCommissionPayments, type CommissionPayment, type DemoCommissionEarning } from '../lib/supabasePayments';
+import { listMyPaidCommissionPayments, type CommissionPayment } from '../lib/supabasePayments';
+import { netCommissionPaymentAmount } from '../lib/commissionPaymentAccounting';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { useMockToast } from '../components/ui/MockToast';
 import { useNotifications } from '../context/NotificationContext';
@@ -46,7 +47,7 @@ function commissionSnapshotLabel(commission: MyCommission): string {
 }
 
 function paidTotalsByCurrency(
-  payments: Array<Pick<CommissionPayment, 'paid_at' | 'amount' | 'currency'>>,
+  payments: Array<Pick<CommissionPayment, 'paid_at' | 'amount' | 'currency' | 'refunded_amount' | 'refunded_at'>>,
   now = new Date(),
 ): Array<{ currency: string; amount: number; count: number }> {
   const totals = new Map<string, { amount: number; count: number }>();
@@ -55,8 +56,8 @@ function paidTotalsByCurrency(
     if (!paidAt || Number.isNaN(paidAt.getTime())
       || paidAt.getFullYear() !== now.getFullYear()
       || paidAt.getMonth() !== now.getMonth()) continue;
-    const amount = Number(payment.amount);
-    if (!Number.isFinite(amount)) continue;
+    const amount = netCommissionPaymentAmount(payment);
+    if (amount <= 0) continue;
     const total = totals.get(payment.currency) ?? { amount: 0, count: 0 };
     total.amount += amount;
     total.count += 1;
@@ -116,9 +117,6 @@ export function HomeDashboardPage() {
   const [paidCommissionPayments, setPaidCommissionPayments] = useState<CommissionPayment[]>([]);
   const [loadingPaidCommissionPayments, setLoadingPaidCommissionPayments] = useState(true);
   const [paidCommissionPaymentsError, setPaidCommissionPaymentsError] = useState(false);
-  const [demoCommissionEarnings, setDemoCommissionEarnings] = useState<DemoCommissionEarning[]>([]);
-  const [loadingDemoCommissionEarnings, setLoadingDemoCommissionEarnings] = useState(true);
-  const [demoCommissionEarningsError, setDemoCommissionEarningsError] = useState(false);
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [commissionProgressById, setCommissionProgressById] = useState<Record<string, number>>({});
   const [commissionProgressFailedById, setCommissionProgressFailedById] = useState<Record<string, boolean>>({});
@@ -142,23 +140,15 @@ export function HomeDashboardPage() {
     : commissionTab === 'pending'
       ? (user?.role === 'artist' ? [] : pendingCommissions)
       : completedCommissions;
-  const eligibleDemoPayments = useMemo(
-    () => demoCommissionEarnings.filter((earning) => earning.payment_status === 'PAID'
-      && (earning.earnings_category === 'PENDING' || earning.earnings_category === 'COMPLETED')
-      && !earning.refunded_at),
-    [demoCommissionEarnings],
+  const revenueUsesDemoPayments = paidCommissionPayments.some((payment) =>
+    payment.status === 'PAID' && payment.provider === 'DEMO_SIMULATION' && Boolean(payment.demo_paid_at),
   );
-  const revenueUsesDemoPayments = user?.role === 'artist'
-    && !loadingDemoCommissionEarnings
-    && eligibleDemoPayments.length > 0;
-  const revenuePayments = revenueUsesDemoPayments ? eligibleDemoPayments : paidCommissionPayments;
+  const revenuePayments = paidCommissionPayments;
   const paidCurrencyTotals = useMemo(() => paidTotalsByCurrency(revenuePayments), [revenuePayments]);
   const paidHistoryPoints = useMemo(() => paidPaymentHistoryPoints(revenuePayments), [revenuePayments]);
   const currentMonthPaidCount = paidCurrencyTotals.reduce((count, total) => count + total.count, 0);
-  const revenuePaymentsLoading = !revenueUsesDemoPayments
-    && (loadingPaidCommissionPayments || (user?.role === 'artist' && loadingDemoCommissionEarnings));
-  const revenuePaymentsError = !revenueUsesDemoPayments
-    && paidCommissionPaymentsError;
+  const revenuePaymentsLoading = loadingPaidCommissionPayments;
+  const revenuePaymentsError = paidCommissionPaymentsError;
   const pendingRequestCount = pendingCommissions.length;
   const recentCommissionActivity = useMemo(() => notifications
     .filter((notification) => notification.notification_type === 'commission' || notification.notification_type === 'revision')
@@ -217,10 +207,19 @@ export function HomeDashboardPage() {
     void refreshCommissions().catch((error: unknown) => {
       console.error('ArtGuard: unable to refresh commissions when returning to dashboard', error);
     });
+    setLoadingPaidCommissionPayments(true);
+    setPaidCommissionPaymentsError(false);
+    void listMyPaidCommissionPayments(user.id, user.role)
+      .then(setPaidCommissionPayments)
+      .catch(() => {
+        setPaidCommissionPayments([]);
+        setPaidCommissionPaymentsError(true);
+      })
+      .finally(() => setLoadingPaidCommissionPayments(false));
     void refreshNotifications().catch((error: unknown) => {
       console.error('ArtGuard: unable to refresh activity when returning to dashboard', error);
     });
-  }, [refreshCommissions, refreshNotifications, user?.id]);
+  }, [refreshCommissions, refreshNotifications, user?.id, user?.role]);
 
   const logHomeViewWillLeave = useCallback(() => {
     logAuthInteractionDiagnostic('home.ionic-view.will-leave', { destination: '/home' });
@@ -281,36 +280,6 @@ export function HomeDashboardPage() {
   }, [user?.id, user?.role]);
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !user || user.role !== 'artist') {
-      setDemoCommissionEarnings([]);
-      setDemoCommissionEarningsError(false);
-      setLoadingDemoCommissionEarnings(false);
-      return;
-    }
-
-    let active = true;
-    setDemoCommissionEarnings([]);
-    setDemoCommissionEarningsError(false);
-    setLoadingDemoCommissionEarnings(true);
-    listMyDemoCommissionEarnings()
-      .then((earnings) => {
-        if (active) setDemoCommissionEarnings(earnings);
-      })
-      .catch(() => {
-        if (active) {
-          setDemoCommissionEarnings([]);
-          setDemoCommissionEarningsError(true);
-        }
-      })
-      .finally(() => {
-        if (active) setLoadingDemoCommissionEarnings(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [user?.id, user?.role]);
-
-  useEffect(() => {
     if (!isSupabaseConfigured || !user || activeCommissions.length === 0) {
       setCommissionProgressById({});
       setCommissionProgressFailedById({});
@@ -338,7 +307,7 @@ export function HomeDashboardPage() {
   }, [user?.id, activeCommissions]);
 
   const refreshDashboard = async () => {
-    if (dashboardRefreshInProgress.current || loadingCommissions || loadingPaidCommissionPayments || loadingDemoCommissionEarnings || loadingNotifications) return;
+    if (dashboardRefreshInProgress.current || loadingCommissions || loadingPaidCommissionPayments || loadingNotifications) return;
     if (!user || !isSupabaseConfigured) {
       await refreshNotifications();
       return;
@@ -346,10 +315,9 @@ export function HomeDashboardPage() {
     dashboardRefreshInProgress.current = true;
     setRefreshingDashboard(true);
     try {
-      const [commissionsResult, paymentsResult, demoEarningsResult] = await Promise.allSettled([
+      const [commissionsResult, paymentsResult] = await Promise.allSettled([
         listMyCommissions(user.id),
         listMyPaidCommissionPayments(user.id, user.role),
-        user.role === 'artist' ? listMyDemoCommissionEarnings() : Promise.resolve([]),
       ]);
       if (commissionsResult.status === 'fulfilled') {
         setMyCommissions(commissionsResult.value);
@@ -364,12 +332,6 @@ export function HomeDashboardPage() {
         setPaidCommissionPaymentsError(false);
       } else {
         setPaidCommissionPaymentsError(true);
-      }
-      if (demoEarningsResult.status === 'fulfilled') {
-        setDemoCommissionEarnings(demoEarningsResult.value);
-        setDemoCommissionEarningsError(false);
-      } else {
-        setDemoCommissionEarningsError(true);
       }
       await refreshNotifications();
     } finally {
@@ -526,11 +488,7 @@ export function HomeDashboardPage() {
                 <span className="t-xs home-revenue-label">
                   {user?.role === 'artist' ? 'Revenue · This month' : 'Spending · This month'}
                 </span>
-                {(revenueUsesDemoPayments || (user?.role === 'artist' && demoCommissionEarningsError)) && (
-                  <span className="badge home-revenue-badge" role={demoCommissionEarningsError ? 'status' : undefined}>
-                    {demoCommissionEarningsError ? 'DEMO DATA UNAVAILABLE' : 'DEMO ONLY'}
-                  </span>
-                )}
+                {revenueUsesDemoPayments && <span className="badge home-revenue-badge">DEMO ONLY</span>}
               </div>
 
               {revenuePaymentsLoading ? (
@@ -831,7 +789,7 @@ export function HomeDashboardPage() {
                   className="home-refresh-button"
                   aria-label="Refresh dashboard"
                   title="Refresh dashboard"
-                  disabled={loadingCommissions || loadingPaidCommissionPayments || loadingDemoCommissionEarnings || loadingNotifications || refreshingDashboard}
+                  disabled={loadingCommissions || loadingPaidCommissionPayments || loadingNotifications || refreshingDashboard}
                   onClick={() => void refreshDashboard()}
                 >
                   <Icon name="refresh" />
