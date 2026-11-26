@@ -47,6 +47,7 @@ interface RevisionRequestsProps {
   deliverableId?: string;
   refreshKey?: number;
   readOnly?: boolean;
+  collapseResolved?: boolean;
   onCommissionChanged?: () => Promise<void>;
   onRevisionCountChange?: (count: number) => void;
 }
@@ -58,7 +59,7 @@ interface RevisionRequestsProps {
  * Renders nothing fake: if Supabase isn't configured, it says so
  * instead of simulating success.
  */
-export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverableId, refreshKey = 0, readOnly = false, onCommissionChanged, onRevisionCountChange }: RevisionRequestsProps) {
+export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverableId, refreshKey = 0, readOnly = false, collapseResolved = false, onCommissionChanged, onRevisionCountChange }: RevisionRequestsProps) {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>('loading');
   const [commission, setCommission] = useState<CommissionLink | null>(null);
@@ -256,6 +257,10 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
     && !readOnly
     && commission?.status === 'IN_PROGRESS'
     && !revisions.some((revision) => ['OPEN', 'IN_PROGRESS', 'SUBMITTED'].includes(revision.status));
+  const resolvedRevisions = collapseResolved ? revisions.filter((revision) => revision.status === 'RESOLVED') : [];
+  const visibleRevisions = collapseResolved
+    ? revisions.filter((revision) => revision.status !== 'RESOLVED')
+    : revisions;
 
   return (
     <>
@@ -368,109 +373,138 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
             </form>
           )}
 
-          {revisions.length === 0 && !isClient && (
+          {visibleRevisions.length === 0 && resolvedRevisions.length === 0 && !isClient && (
             <div className="card t-sm c-mid" style={{ textAlign: 'center', marginBottom: 14 }}>
               No revision requests yet.
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
-            {revisions.map((rev) => {
-              const badge = STATUS_BADGE[rev.status];
-              const busy = busyRevisionId === rev.id;
-              return (
-                <div className="card" key={rev.id}>
-                  <div className="row-between" style={{ marginBottom: 8 }}>
-                    <span className={badge.className} style={badge.style}>
-                      {badge.label}
-                    </span>
-                    <span className="t-xs c-low">
-                      {new Date(rev.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                    </span>
-                  </div>
-                  <p className="t-sm c-mid" style={{ lineHeight: 1.5, marginBottom: rev.response_text ? 10 : 0 }}>
-                    {rev.description}
-                  </p>
-                  {rev.deliverable_id && <div className="t-xs c-low" style={{ marginBottom: 8 }}>Deliverable revision requested</div>}
-                  {rev.response_text && (
-                    <div className="card" style={{ background: 'var(--ag-surface-2)', padding: '10px 12px' }}>
-                      <div className="t-xs c-low fw-700" style={{ marginBottom: 3 }}>
-                        Artist&apos;s response
-                      </div>
-                      <span className="t-xs c-mid">{rev.response_text}</span>
+          {visibleRevisions.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+              {visibleRevisions.map((rev) => {
+                const badge = STATUS_BADGE[rev.status];
+                const busy = busyRevisionId === rev.id;
+                return (
+                  <div className="card" key={rev.id}>
+                    <div className="row-between" style={{ marginBottom: 8 }}>
+                      <span className={badge.className} style={badge.style}>
+                        {badge.label}
+                      </span>
+                      <span className="t-xs c-low">
+                        {new Date(rev.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
                     </div>
-                  )}
-
-                  {isArtist && !readOnly && rev.status === 'OPEN' && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      style={{ marginTop: 12 }}
-                      disabled={busy}
-                      onClick={() => handleStartWork(rev.id)}
-                    >
-                      {busy ? 'Updating…' : 'Start Revision'}
-                    </button>
-                  )}
-
-                  {isArtist && !readOnly && rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
-                    <div className="t-xs c-low" style={{ marginTop: 10 }}>
-                      Upload the revised file in Deliverables above. This request will be marked submitted after the upload succeeds.
-                    </div>
-                  )}
-
-                  {isArtist && !readOnly && !rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
-                    <div style={{ marginTop: 12 }}>
-                      <textarea
-                        className="textarea-field"
-                        value={responseDrafts[rev.id] ?? ''}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setResponseDrafts((prev) => ({ ...prev, [rev.id]: value }));
-                          if (responseErrors[rev.id]) setResponseErrors((prev) => ({ ...prev, [rev.id]: undefined }));
-                        }}
-                        placeholder="Describe the revised work…"
-                        rows={2}
-                        style={{ marginBottom: responseErrors[rev.id] ? 6 : 10 }}
-                      />
-                      {responseErrors[rev.id] && (
-                        <div className="field-error" style={{ marginBottom: 10 }}>
-                          <Icon name="alert" style={{ width: 12, height: 12, stroke: 'var(--ag-danger)' }} />
-                          <span>{responseErrors[rev.id]}</span>
+                    <p className="t-sm c-mid" style={{ lineHeight: 1.5, marginBottom: rev.response_text ? 10 : 0 }}>
+                      {rev.description}
+                    </p>
+                    {rev.deliverable_id && <div className="t-xs c-low" style={{ marginBottom: 8 }}>Deliverable revision requested</div>}
+                    {rev.response_text && (
+                      <div className="card" style={{ background: 'var(--ag-surface-2)', padding: '10px 12px' }}>
+                        <div className="t-xs c-low fw-700" style={{ marginBottom: 3 }}>
+                          Artist&apos;s response
                         </div>
-                      )}
+                        <span className="t-xs c-mid">{rev.response_text}</span>
+                      </div>
+                    )}
+
+                    {isArtist && !readOnly && rev.status === 'OPEN' && (
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
+                        style={{ marginTop: 12 }}
                         disabled={busy}
-                        onClick={() => handleSubmitResponse(rev.id)}
+                        onClick={() => handleStartWork(rev.id)}
                       >
-                        {busy ? 'Submitting…' : 'Submit Response'}
+                        {busy ? 'Updating…' : 'Start Revision'}
                       </button>
-                    </div>
-                  )}
+                    )}
 
-                  {isClient && !readOnly && rev.deliverable_id && rev.status === 'SUBMITTED' && (
-                    <div className="t-xs c-low" style={{ marginTop: 10 }}>
-                      Review the revised file in Deliverables above. Approving it resolves this request.
-                    </div>
-                  )}
+                    {isArtist && !readOnly && rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
+                      <div className="t-xs c-low" style={{ marginTop: 10 }}>
+                        Upload the revised file in Deliverables above. This request will be marked submitted after the upload succeeds.
+                      </div>
+                    )}
 
-                  {isClient && !readOnly && !rev.deliverable_id && rev.status === 'SUBMITTED' && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      style={{ marginTop: 12 }}
-                      disabled={busy}
-                      onClick={() => handleResolve(rev.id)}
-                    >
-                      {busy ? 'Updating…' : 'Mark Resolved'}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                    {isArtist && !readOnly && !rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
+                      <div style={{ marginTop: 12 }}>
+                        <textarea
+                          className="textarea-field"
+                          value={responseDrafts[rev.id] ?? ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setResponseDrafts((prev) => ({ ...prev, [rev.id]: value }));
+                            if (responseErrors[rev.id]) setResponseErrors((prev) => ({ ...prev, [rev.id]: undefined }));
+                          }}
+                          placeholder="Describe the revised work…"
+                          rows={2}
+                          style={{ marginBottom: responseErrors[rev.id] ? 6 : 10 }}
+                        />
+                        {responseErrors[rev.id] && (
+                          <div className="field-error" style={{ marginBottom: 10 }}>
+                            <Icon name="alert" style={{ width: 12, height: 12, stroke: 'var(--ag-danger)' }} />
+                            <span>{responseErrors[rev.id]}</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={busy}
+                          onClick={() => handleSubmitResponse(rev.id)}
+                        >
+                          {busy ? 'Submitting…' : 'Submit Response'}
+                        </button>
+                      </div>
+                    )}
+
+                    {isClient && !readOnly && rev.deliverable_id && rev.status === 'SUBMITTED' && (
+                      <div className="t-xs c-low" style={{ marginTop: 10 }}>
+                        Review the revised file in Deliverables above. Approving it resolves this request.
+                      </div>
+                    )}
+
+                    {isClient && !readOnly && !rev.deliverable_id && rev.status === 'SUBMITTED' && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ marginTop: 12 }}
+                        disabled={busy}
+                        onClick={() => handleResolve(rev.id)}
+                      >
+                        {busy ? 'Updating…' : 'Mark Resolved'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {resolvedRevisions.length > 0 && (
+            <details className="workspace-resolved-revisions">
+              <summary>Resolved requests ({resolvedRevisions.length})</summary>
+              <div className="workspace-resolved-revision-list">
+                {resolvedRevisions.map((revision) => (
+                  <article className="card" key={revision.id}>
+                    <div className="row-between" style={{ marginBottom: 8 }}>
+                      <span className="badge badge-success">Resolved</span>
+                      <span className="t-xs c-low">
+                        {new Date(revision.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
+                    </div>
+                    <p className="t-sm c-mid" style={{ lineHeight: 1.5, marginBottom: revision.response_text ? 10 : 0 }}>
+                      {revision.description}
+                    </p>
+                    {revision.response_text && (
+                      <div className="card" style={{ background: 'var(--ag-surface-2)', padding: '10px 12px' }}>
+                        <div className="t-xs c-low fw-700" style={{ marginBottom: 3 }}>Artist&apos;s response</div>
+                        <span className="t-xs c-mid">{revision.response_text}</span>
+                      </div>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </details>
+          )}
         </>
       )}
 

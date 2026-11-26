@@ -1169,6 +1169,8 @@ export function CommissionWorkspacePage() {
     const nextMilestoneIndex = activeMilestoneIndex >= 0
       ? activeMilestoneIndex
       : milestones.findIndex((milestone) => milestone.status === 'PENDING');
+    const activeMilestone = activeMilestoneIndex >= 0 ? milestones[activeMilestoneIndex] : null;
+    const submittedMilestone = milestones.find((milestone) => milestone.status === 'SUBMITTED') ?? null;
     const isQuoteAwaitingArtist = realCommission.status === 'REQUESTED' && realCommission.quote_status === 'AWAITING_ARTIST';
     const isQuoteAwaitingClient = realCommission.status === 'REQUESTED' && realCommission.quote_status === 'PENDING_CLIENT';
     const hasBudgetGuide = realCommission.client_budget !== null
@@ -1199,8 +1201,13 @@ export function CommissionWorkspacePage() {
     ) || (
       isArtist && ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status)
     );
+    const startableMilestone = isArtist && realCommission.status === 'IN_PROGRESS'
+      ? milestones.find((milestone, index) => milestone.status === 'PENDING'
+        && milestones.slice(0, index).every((previous) => previous.status === 'SUBMITTED' || previous.status === 'APPROVED')) ?? null
+      : null;
     const submittedDeliverableExists = deliverables.some((deliverable) => deliverable.status === 'SUBMITTED');
     const submittedMilestoneExists = milestones.some((milestone) => milestone.status === 'SUBMITTED');
+    const activeRevisionExists = revisionRequests.some((revision) => ['OPEN', 'IN_PROGRESS', 'SUBMITTED'].includes(revision.status));
     const historyEvents: Array<{ label: string; timestamp: string | null }> = [];
     const addHistoryEvent = (label: string, value: string | null | undefined, includeWithoutTimestamp = false) => {
       const timestamp = formatDemoTimestamp(value);
@@ -1270,31 +1277,45 @@ export function CommissionWorkspacePage() {
       } else if (submittedDeliverableExists && isClient) {
         nextStepTitle = 'Artwork Submitted — Awaiting Your Review';
         nextStepDescription = 'Review the submitted deliverable below and approve it or request a revision.';
-      } else if (submittedMilestoneExists) {
-        nextStepTitle = isClient ? 'Work Stage Awaiting Your Approval' : 'Work Stage Awaiting Client Approval';
-        nextStepDescription = isClient
-          ? 'Review the current work stage below and approve it when it meets the agreed requirements.'
-          : 'The Client needs to review the submitted work stage.';
+      } else if (submittedMilestoneExists && isClient) {
+        nextStepTitle = `${submittedMilestone?.name ?? 'Work stage'} Awaiting Your Approval`;
+        nextStepDescription = 'Review this stage and approve it when it meets the agreed requirements.';
+      } else if (submittedMilestoneExists && isArtist && !startableMilestone) {
+        nextStepTitle = 'Waiting for Client Review';
+        nextStepDescription = `The Client is reviewing ${submittedMilestone?.name ?? 'the submitted work stage'}.`;
       } else if (isArtist) {
-        nextStepTitle = 'Work in Progress';
-        nextStepDescription = 'Continue updating progress, advancing milestones, and submitting deliverables below.';
+        nextStepTitle = activeMilestone
+          ? startableMilestone ? `Start ${startableMilestone.name}` : `Continue ${activeMilestone.name}`
+          : 'Continue the commission';
+        nextStepDescription = startableMilestone
+          ? 'Begin the next work stage.'
+          : activeMilestone
+            ? 'Add an optional note, then submit this stage when it is ready for Client review.'
+            : 'Continue the work and submit artwork for Client review in Deliverables below.';
       } else {
-        nextStepTitle = 'Your Artist Is Working on This Commission';
-        nextStepDescription = 'Progress updates and work-stage reviews will appear below.';
+        nextStepTitle = activeMilestone ? `Artist is preparing ${activeMilestone.name}` : 'Your Artist is working on this commission';
+        nextStepDescription = activeMilestone
+          ? "You'll be notified when this stage is ready."
+          : 'Progress updates and work-stage reviews will appear below.';
       }
     } else if (realCommission.status === 'REVISION_REQUESTED') {
-      nextStepTitle = isArtist ? 'Revision Requested — Your Response Is Next' : 'Revision Requested — Waiting for Artist';
-      nextStepDescription = isArtist
-        ? 'Review the revision request and upload the revised artwork as a new deliverable.'
-        : 'The Artist is preparing revised artwork. You can review it when it is submitted.';
+      if (completionReady && isClient) {
+        nextStepTitle = 'All Required Work Approved — Ready to Complete';
+        nextStepDescription = 'All deliverables, milestones, and revisions are clear. You can close the commission.';
+      } else {
+        nextStepTitle = isArtist ? 'Respond to the requested changes' : 'Waiting for revised artwork';
+        nextStepDescription = isArtist
+          ? 'Review the revision request and upload the revised artwork as a new deliverable.'
+          : 'The Artist is preparing revised artwork. You can review it when it is submitted.';
+      }
     } else if (realCommission.status === 'COMPLETED') {
-      nextStepTitle = 'Commission Completed';
-      nextStepDescription = 'The commission is closed. Its deliverables and transaction history remain available.';
+      nextStepTitle = 'Review finished work';
+      nextStepDescription = 'Deliverables and transaction history remain available.';
     } else if (realCommission.status === 'CANCELLED') {
-      nextStepTitle = 'Commission Cancelled';
-      nextStepDescription = 'This commission is no longer active.';
+      nextStepTitle = 'Cancellation details';
+      nextStepDescription = 'No further work is expected.';
     } else if (realCommission.status === 'REJECTED') {
-      nextStepTitle = 'Commission Rejected';
+      nextStepTitle = 'Request details';
       nextStepDescription = 'This request is no longer active.';
     }
 
@@ -1423,7 +1444,6 @@ export function CommissionWorkspacePage() {
 
         <section className="workspace-next-action" aria-labelledby="workspace-next-action-title">
           <div className="workspace-next-action-copy">
-            <div className="workspace-eyebrow">Current stage · {COMMISSION_STATUS_LABELS[realCommission.status]}</div>
             <h2 id="workspace-next-action-title">{nextStepTitle}</h2>
             <p>{nextStepDescription}</p>
             {realCommission.status === 'CANCELLED' && (
@@ -1441,6 +1461,11 @@ export function CommissionWorkspacePage() {
             )}
           </div>
           <div className="workspace-next-action-controls">
+            {isArtist && isQuoteAwaitingArtist && (
+              <button type="button" className="btn btn-primary" onClick={() => navigate('/home')}>
+                Go to dashboard to submit quote
+              </button>
+            )}
             {isClient && isQuoteAwaitingClient && (
               <>
                 <div className="t-xs c-low workspace-action-note">
@@ -1530,6 +1555,33 @@ export function CommissionWorkspacePage() {
                 )}
               </>
             )}
+            {isClient && realCommission.status === 'IN_PROGRESS' && !completionReady && submittedDeliverableExists && (
+              <a className="btn btn-primary" href="#commission-deliverables">Review submitted artwork</a>
+            )}
+            {isClient && realCommission.status === 'IN_PROGRESS' && !completionReady && !submittedDeliverableExists && submittedMilestoneExists && (
+              <a className="btn btn-primary" href="#workspace-milestones">Review submitted stage</a>
+            )}
+            {isArtist && realCommission.status === 'IN_PROGRESS' && startableMilestone && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void handleStartMilestone(startableMilestone.id)}
+                disabled={milestoneActionId !== null}
+              >
+                {milestoneActionId === startableMilestone.id ? 'Starting…' : `Start ${startableMilestone.name}`}
+              </button>
+            )}
+            {isArtist && realCommission.status === 'IN_PROGRESS' && !startableMilestone && activeMilestone?.status === 'IN_PROGRESS' && (
+              <a className="btn btn-primary" href="#workspace-current-milestone">Go to current stage</a>
+            )}
+            {isArtist && realCommission.status === 'IN_PROGRESS' && !startableMilestone && !activeMilestone && (
+              <a className="btn btn-primary" href="#commission-deliverables">Go to Deliverables</a>
+            )}
+            {realCommission.status === 'REVISION_REQUESTED' && !completionReady && (
+              <a className="btn btn-primary" href={isArtist ? '#commission-deliverables' : '#commission-revisions'}>
+                {isArtist ? 'Go to Deliverables' : 'Review revision request'}
+              </a>
+            )}
             {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'loading' && (
               <div className="t-xs c-low" role="status">Checking review status…</div>
             )}
@@ -1573,21 +1625,6 @@ export function CommissionWorkspacePage() {
           </div>
         </section>
 
-        <details className="workspace-history">
-          <summary>Transaction History <span>{historyEvents.length} event{historyEvents.length === 1 ? '' : 's'}</span></summary>
-          <ol className="workspace-history-list">
-            {historyEvents.map((event, index) => (
-              <li key={`${event.label}-${index}`}>
-                <span className="workspace-history-marker" aria-hidden="true" />
-                <div>
-                  <strong>{event.label}</strong>
-                  <time>{event.timestamp ?? 'Date not recorded'}</time>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </details>
-
         <section className="workspace-brief" aria-labelledby="workspace-brief-title">
           <h2 id="workspace-brief-title">Requirements / Brief</h2>
           <div className={`workspace-brief-description${!briefExpanded && (realCommission.description?.length ?? 0) > 500 ? ' is-collapsed' : ''}`}>
@@ -1600,55 +1637,8 @@ export function CommissionWorkspacePage() {
           )}
         </section>
 
-        {showPaymentPanel && (
-          <section
-            className="card workspace-payment-card workspace-commission-payment-card ag-liquid-glass-soft"
-            style={{ marginBottom: 16 }}
-            aria-label="Commission payment"
-          >
-            <div className="row-between workspace-payment-card-header">
-              <span className="section-title">Payment</span>
-              <span className="badge badge-warning workspace-payment-chip">SIMULATED</span>
-            </div>
-            <div className="workspace-payment-details">
-              <strong>{realCommission.title}</strong>
-              <span>Artist · {realCommission.artist_id === user.id ? user.name || 'You' : realCounterparty?.name ?? 'Artist'}</span>
-            </div>
-            <div className="mono workspace-payment-amount">
-              {paymentAvailable
-                ? formatDemoAmount(realCommission.amount!, realCommission.currency!)
-                : 'Price not agreed'}
-            </div>
-            <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
-              {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
-            </div>
-            {!paymentLoading && commissionPayment?.status === 'REFUNDED' && commissionPayment.refunded_amount !== null && (
-              <div className="workspace-payment-refund">
-                {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
-                {commissionPayment.refunded_at && ` · ${formatCommissionDate(commissionPayment.refunded_at)}`}
-              </div>
-            )}
-            {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
-            {!paymentLoading && (
-              <div className="workspace-payment-actions">
-                {canRefundPayment && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
-                    disabled={refundSubmitting || paymentActionLoading}
-                  >
-                    Refund payment
-                  </button>
-                )}
-              </div>
-            )}
-            <p className="workspace-payment-disclosure">Simulated transaction. No real money is transferred.</p>
-          </section>
-        )}
-
         {(realCommission.status === 'ACCEPTED' || realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
-          <section className="card workspace-milestone-card ag-liquid-glass-soft" style={{ marginBottom: 16 }}>
+          <section id="workspace-milestones" className="card workspace-milestone-card ag-liquid-glass-soft" style={{ marginBottom: 16 }}>
             <div className="workspace-section-heading">
               <h2>Work Stages</h2>
               <p>Milestone approval is separate from final deliverable approval.</p>
@@ -1681,7 +1671,12 @@ export function CommissionWorkspacePage() {
                       && milestone.status === 'PENDING'
                       && milestones.slice(0, index).every((previous) => previous.status === 'SUBMITTED' || previous.status === 'APPROVED');
                     return (
-                      <div className="row gap-12 workspace-milestone-item" key={milestone.id} style={{ position: 'relative' }}>
+                      <div
+                        id={index === activeMilestoneIndex ? 'workspace-current-milestone' : undefined}
+                        className="row gap-12 workspace-milestone-item"
+                        key={milestone.id}
+                        style={{ position: 'relative' }}
+                      >
                         <div className="workspace-milestone-dot" data-status={milestone.status} style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', flexShrink: 0, position: 'relative', ...STATUS_DOT_STYLE[statusKey] }}>
                           {milestone.status === 'APPROVED' && <Icon name="check-circle" style={{ width: 14, height: 14, stroke: '#08110c' }} />}
                         </div>
@@ -1690,15 +1685,16 @@ export function CommissionWorkspacePage() {
                             <span className={`t-sm fw-700${milestone.status === 'PENDING' ? ' c-low' : ''}`}>{milestone.sort_order}. {milestone.name}</span>
                             <span className="t-xs c-low workspace-milestone-status">
                               {milestone.status === 'SUBMITTED'
-                                ? 'Awaiting review · '
-                                : index === nextMilestoneIndex
-                                  ? 'Current stage · '
-                                  : milestone.status === 'APPROVED' ? 'Complete · ' : 'Upcoming · '}
-                              {milestone.status.replace('_', ' ')}
+                                ? 'Awaiting review'
+                                : milestone.status === 'APPROVED'
+                                  ? 'Approved'
+                                  : milestone.status === 'IN_PROGRESS'
+                                    ? 'In progress'
+                                    : index === nextMilestoneIndex ? 'Next' : 'Upcoming'}
                             </span>
                           </div>
                           {(milestone.note || milestoneDate) && <div className="t-xs c-low" style={{ marginTop: 3 }}>{milestone.note}{milestone.note && milestoneDate ? ' · ' : ''}{milestoneDate ? new Date(milestoneDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}</div>}
-                          {canStart && (
+                          {canStart && milestone.id !== startableMilestone?.id && (
                             <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => void handleStartMilestone(milestone.id)} disabled={milestoneActionId !== null}>
                               {milestoneActionId === milestone.id ? 'Starting…' : 'Start'}
                             </button>
@@ -1725,55 +1721,12 @@ export function CommissionWorkspacePage() {
                               {milestoneActionId === milestone.id ? 'Approving…' : 'Approve'}
                             </button>
                           )}
-                          {milestone.status === 'APPROVED' && <div className="t-xs c-success" style={{ marginTop: 8 }}>Approved{milestone.approved_at ? ` · ${new Date(milestone.approved_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}</div>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
-            )}
-          </section>
-        )}
-
-        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
-          <section className="card workspace-progress-card" style={{ marginBottom: 16 }}>
-            <div className="workspace-section-heading">
-              <h2>Progress Updates</h2>
-              <p>Informational updates do not replace formal milestone or deliverable approval.</p>
-            </div>
-            {progressUpdates[0] && (
-              <div className="workspace-latest-progress">
-                <strong>{progressUpdates[0].progress_percent}% complete</strong>
-                <p>{progressUpdates[0].note}</p>
-                <time>{new Date(progressUpdates[0].created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
-              </div>
-            )}
-            {progressLoading && <div className="t-xs c-low" role="status">Loading progress…</div>}
-            {!progressLoading && progressError && <div className="t-xs c-danger" role="alert">{progressError}</div>}
-            {!progressLoading && !progressError && progressUpdates.length === 0 && <div className="t-sm c-low">No progress updates yet.</div>}
-            {!progressLoading && !progressError && progressUpdates.length > 1 && (
-              <div className="workspace-progress-history">
-                <h3>Earlier updates</h3>
-                {progressUpdates.slice(1).map((update) => (
-                  <article key={update.id}>
-                    <div className="row-between gap-10">
-                      <strong>{update.progress_percent}%</strong>
-                      <time>{new Date(update.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
-                    </div>
-                    <p>{update.note}</p>
-                  </article>
-                ))}
-              </div>
-            )}
-            {isArtist && realCommission.status === 'IN_PROGRESS' && (
-              <form onSubmit={(event) => void handlePostProgress(event)} className="workspace-progress-form">
-                <label className="field-label" htmlFor="progress-percent">Progress</label>
-                <input id="progress-percent" className="input-field" type="number" min="0" max="100" step="1" value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} />
-                <label className="field-label" htmlFor="progress-note">Update</label>
-                <textarea id="progress-note" className="textarea-field" rows={3} value={progressNote} onChange={(event) => setProgressNote(event.target.value)} placeholder="Describe the latest work update." />
-                <button type="submit" className="btn btn-secondary" disabled={postingProgress}>{postingProgress ? 'Posting…' : 'Post Progress Update'}</button>
-              </form>
             )}
           </section>
         )}
@@ -1831,8 +1784,99 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
+        {showPaymentPanel && (
+          <section
+            className="card workspace-payment-card workspace-commission-payment-card ag-liquid-glass-soft"
+            style={{ marginBottom: 16 }}
+            aria-label="Commission payment"
+          >
+            <div className="row-between workspace-payment-card-header">
+              <span className="section-title">Payment</span>
+              <span className="badge badge-warning workspace-payment-chip">SIMULATED</span>
+            </div>
+            <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
+              {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
+            </div>
+            {!paymentLoading && commissionPayment?.status === 'REFUNDED' && commissionPayment.refunded_amount !== null && (
+              <div className="workspace-payment-refund">
+                {formatDemoAmount(commissionPayment.refunded_amount, commissionPayment.currency)}
+                {commissionPayment.refunded_at && ` · ${formatCommissionDate(commissionPayment.refunded_at)}`}
+              </div>
+            )}
+            {paymentError && <div className="t-xs c-danger" role="alert">{paymentError}</div>}
+            {!paymentLoading && canRefundPayment && (
+              <div className="workspace-payment-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
+                  disabled={refundSubmitting || paymentActionLoading}
+                >
+                  Refund payment
+                </button>
+              </div>
+            )}
+            <p className="workspace-payment-disclosure">Simulated transaction. No real money is transferred.</p>
+          </section>
+        )}
+
+        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
+          <section className="card workspace-progress-card" style={{ marginBottom: 16 }}>
+            <div className="workspace-section-heading">
+              <h2>Progress Updates</h2>
+              <p>Informational updates do not replace formal milestone or deliverable approval.</p>
+            </div>
+            {progressUpdates[0] && (
+              <div className="workspace-latest-progress">
+                <strong>{progressUpdates[0].progress_percent}% complete</strong>
+                <p>{progressUpdates[0].note}</p>
+                <time>{new Date(progressUpdates[0].created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
+              </div>
+            )}
+            {progressLoading && <div className="t-xs c-low" role="status">Loading progress…</div>}
+            {!progressLoading && progressError && <div className="t-xs c-danger" role="alert">{progressError}</div>}
+            {!progressLoading && !progressError && progressUpdates.length === 0 && <div className="t-sm c-low">No progress updates yet.</div>}
+            {!progressLoading && !progressError && progressUpdates.length > 1 && (
+              <details className="workspace-progress-history-disclosure">
+                <summary>Earlier updates ({progressUpdates.length - 1})</summary>
+                <div className="workspace-progress-history">
+                  {progressUpdates.slice(1).map((update) => (
+                    <article key={update.id}>
+                      <div className="row-between gap-10">
+                        <strong>{update.progress_percent}%</strong>
+                        <time>{new Date(update.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time>
+                      </div>
+                      <p>{update.note}</p>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            )}
+            {isArtist && realCommission.status === 'IN_PROGRESS' && (
+              <details className="workspace-progress-form-disclosure">
+                <summary>Post an informational update</summary>
+                <form onSubmit={(event) => void handlePostProgress(event)} className="workspace-progress-form">
+                  <label className="field-label" htmlFor="progress-percent">Progress</label>
+                  <input id="progress-percent" className="input-field" type="number" min="0" max="100" step="1" value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} />
+                  <label className="field-label" htmlFor="progress-note">Update</label>
+                  <textarea id="progress-note" className="textarea-field" rows={3} value={progressNote} onChange={(event) => setProgressNote(event.target.value)} placeholder="Describe the latest work update." />
+                  <button type="submit" className="btn btn-secondary" disabled={postingProgress}>{postingProgress ? 'Posting…' : 'Post Progress Update'}</button>
+                </form>
+              </details>
+            )}
+          </section>
+        )}
+
         {['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status) && (
-          <div style={realCommission.status === 'COMPLETED' || revisionSectionVisible ? undefined : { display: 'none' }}>
+          <div
+            id="commission-revisions"
+            hidden={!revisionSectionVisible
+              && !activeRevisionExists
+              && !revisionRequestsLoading
+              && !revisionRequestsError
+              && realCommission.status !== 'REVISION_REQUESTED'
+              && realCommission.status !== 'COMPLETED'}
+          >
             <RevisionRequests
               commissionId={realCommission.id}
               orderTitle={realCommission.title}
@@ -1840,10 +1884,26 @@ export function CommissionWorkspacePage() {
               refreshKey={revisionRefreshKey}
               onCommissionChanged={refreshCommissionStatus}
               readOnly={realCommission.status === 'COMPLETED'}
+              collapseResolved
               onRevisionCountChange={handleRevisionCountChange}
             />
           </div>
         )}
+
+        <details className="workspace-history">
+          <summary>Transaction History <span>{historyEvents.length} event{historyEvents.length === 1 ? '' : 's'}</span></summary>
+          <ol className="workspace-history-list">
+            {historyEvents.map((event, index) => (
+              <li key={`${event.label}-${index}`}>
+                <span className="workspace-history-marker" aria-hidden="true" />
+                <div>
+                  <strong>{event.label}</strong>
+                  <time>{event.timestamp ?? 'Date not recorded'}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </details>
         {completionDialogOpen && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !completionLoading && setCompletionDialogOpen(false)}>
             <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="complete-commission-title" onClick={(event) => event.stopPropagation()}>
