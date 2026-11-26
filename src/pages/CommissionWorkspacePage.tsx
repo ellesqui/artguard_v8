@@ -1669,8 +1669,6 @@ export function CommissionWorkspacePage() {
           </div>
         </section>
 
-        <div className="workspace-mobile-overview">{overviewContent}</div>
-
         <main className="workspace-main-column">
         <section className="workspace-brief" aria-labelledby="workspace-brief-title">
           <h2 id="workspace-brief-title">Requirements / Brief</h2>
@@ -1782,7 +1780,7 @@ export function CommissionWorkspacePage() {
           <section id="commission-deliverables" className="card workspace-deliverables" style={{ marginBottom: 16 }}>
             <div className="row-between workspace-section-heading">
               <div>
-                <h2>Artist Deliverables</h2>
+                <h2>Work-in-Progress &amp; Milestone Attachments</h2>
                 <p>Original requirements are above. Submitted artwork and its review state appear here.</p>
               </div>
               {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
@@ -1908,6 +1906,7 @@ export function CommissionWorkspacePage() {
         )}
 
         </main>
+        <div className="workspace-mobile-overview">{overviewContent}</div>
         </div>
         <div className="workspace-sidebar-stack">
         <aside className="workspace-sidebar-primary" aria-label="Transaction summary">

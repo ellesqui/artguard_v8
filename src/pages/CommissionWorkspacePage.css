@@ -1517,6 +1517,10 @@
     grid-area: sidebar;
   }
 
+  .workspace-next-action {
+    display: none;
+  }
+
 }
 
 @media (max-width: 999px) {
@@ -1536,20 +1540,20 @@
     order: 1;
   }
 
+  .workspace-main-column {
+    order: 2;
+  }
+
   .workspace-mobile-overview {
     display: block;
     align-self: stretch;
-    order: 2;
+    order: 3;
     width: 100%;
     margin-bottom: 18px;
   }
 
   .workspace-desktop-overview {
     display: none;
-  }
-
-  .workspace-main-column {
-    order: 3;
   }
 
   .workspace-sidebar-primary {
