@@ -755,7 +755,6 @@ export function ArtistProfilePage() {
 
           <div className="artist-profile-info">
             <div className="artist-profile-identity">
-              <div className="artist-profile-username">{profile.handle}</div>
               <div className="artist-profile-display-name">
                 <span>{profile.name}</span>
                 {profile.verified && (
@@ -771,6 +770,7 @@ export function ArtistProfilePage() {
                   <span className="t-xs c-danger">Verification Needs Revision</span>
                 )}
               </div>
+              <div className="artist-profile-username">{profile.handle}</div>
             </div>
 
             {profile.source === 'mock' && (

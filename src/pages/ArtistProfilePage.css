@@ -52,10 +52,9 @@
 }
 
 .artist-profile-username {
-  color: var(--ag-text-hi);
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.2;
+  color: var(--ag-text-mid);
+  font-size: 14px;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -64,9 +63,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  color: var(--ag-text-mid);
-  font-size: 14px;
-  font-weight: 600;
+  color: var(--ag-text-hi);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
@@ -210,11 +210,11 @@
   }
 
   .artist-profile-username {
-    font-size: 19px;
+    font-size: 13px;
   }
 
   .artist-profile-display-name {
-    font-size: 13px;
+    font-size: 19px;
   }
 
   .artist-profile-mock-metadata {
