@@ -35,6 +35,7 @@ export interface CommissionLink {
   estimated_working_hours: number | null;
   quote_status: 'NOT_REQUIRED' | 'AWAITING_ARTIST' | 'PENDING_CLIENT' | 'ACCEPTED';
   quote_accepted_at: string | null;
+  final_delivery_required?: boolean | null;
   completed_at: string | null;
   completed_by: string | null;
   created_at: string;

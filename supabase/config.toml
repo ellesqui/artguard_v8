@@ -3,3 +3,9 @@ verify_jwt = false
 
 [functions.google-login-existing-v2]
 verify_jwt = false
+
+[functions.final-delivery-storage]
+verify_jwt = true
+
+[functions.final-delivery-cleanup]
+verify_jwt = false

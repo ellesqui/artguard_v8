@@ -10,6 +10,7 @@ import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../componen
 import { ArtTile } from '../components/ui/ArtTile';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { RevisionRequests } from '../components/commission/RevisionRequests';
+import { FinalDeliverySection } from '../components/commission/FinalDeliverySection';
 import { Icon } from '../assets/icons';
 import { ORDERS } from '../data/mockData';
 import { useMockToast } from '../components/ui/MockToast';
@@ -239,6 +240,11 @@ export function CommissionWorkspacePage() {
   const [completionLoading, setCompletionLoading] = useState(false);
   const [completionDialogOpen, setCompletionDialogOpen] = useState(false);
   const [completionError, setCompletionError] = useState<string | undefined>();
+  const [finalDeliveryAcceptance, setFinalDeliveryAcceptance] = useState<{
+    commissionId: string;
+    loaded: boolean;
+    accepted: boolean;
+  } | null>(null);
   const [acceptingQuote, setAcceptingQuote] = useState(false);
   const [reviewCheckState, setReviewCheckState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [reviewCheckRetry, setReviewCheckRetry] = useState(0);
@@ -252,6 +258,13 @@ export function CommissionWorkspacePage() {
   const milestoneInitializationInFlight = useRef(new Set<string>());
   const handleRevisionCountChange = useCallback((count: number) => {
     if (count > 0) setRevisionSectionVisible(true);
+  }, []);
+  const handleFinalDeliveryAcceptanceStatusChange = useCallback((
+    commissionId: string,
+    loaded: boolean,
+    accepted: boolean,
+  ) => {
+    setFinalDeliveryAcceptance({ commissionId, loaded, accepted });
   }, []);
   const currentCommissionId = realCommission?.id;
   const refreshCommissionStatus = useCallback(async () => {
@@ -677,6 +690,8 @@ export function CommissionWorkspacePage() {
           ? 'All deliverables must be approved before completion.'
           : message.includes('revision')
             ? 'Resolve all revision requests before completion.'
+            : message.includes('final delivery')
+              ? 'Accept the current Final Delivery before completing.'
             : 'Could not complete this commission.';
       setCompletionError(friendlyMessage);
       showToast(friendlyMessage);
@@ -1214,7 +1229,13 @@ export function CommissionWorkspacePage() {
       revisionsLoading: revisionRequestsLoading,
       revisionsError: revisionRequestsError,
     });
-    const completionReady = completionBlocker === null;
+    const finalDeliveryRequired = realCommission.final_delivery_required === true;
+    const finalDeliveryAcceptanceForCommission = finalDeliveryAcceptance?.commissionId === realCommission.id
+      ? finalDeliveryAcceptance
+      : null;
+    const finalDeliveryAccepted = !finalDeliveryRequired
+      || Boolean(finalDeliveryAcceptanceForCommission?.loaded && finalDeliveryAcceptanceForCommission.accepted);
+    const completionReady = completionBlocker === null && finalDeliveryAccepted;
     const currentMilestoneIndex = milestones.findIndex((milestone) => milestone.status === 'IN_PROGRESS');
     const activeMilestoneIndex = currentMilestoneIndex >= 0
       ? currentMilestoneIndex
@@ -1567,7 +1588,11 @@ export function CommissionWorkspacePage() {
                   </button>
                 ) : (
                   <div className="t-xs c-low workspace-action-note">
-                    {completionBlocker === 'deliverables-loading'
+                    {completionBlocker === null && finalDeliveryRequired && !finalDeliveryAcceptanceForCommission?.loaded
+                      ? 'Checking Final Delivery acceptance…'
+                      : completionBlocker === null && finalDeliveryRequired && !finalDeliveryAccepted
+                        ? 'Accept the current Final Delivery before completing.'
+                        : completionBlocker === 'deliverables-loading'
                       ? 'Checking deliverables…'
                       : completionBlocker === 'milestones-loading'
                         ? 'Checking milestones…'
@@ -1880,6 +1905,22 @@ export function CommissionWorkspacePage() {
               </div>
             )}
           </section>
+        )}
+
+        {finalDeliveryRequired && ['IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status) && (
+          <FinalDeliverySection
+            commissionId={realCommission.id}
+            commissionStatus={realCommission.status}
+            finalDeliveryRequired={realCommission.final_delivery_required}
+            artistId={realCommission.artist_id}
+            clientId={realCommission.client_id}
+            viewerId={user.id}
+            viewerRole={user.role}
+            milestones={milestones}
+            milestonesLoading={milestonesLoading}
+            onAcceptanceStatusChange={handleFinalDeliveryAcceptanceStatusChange}
+            onNotice={showToast}
+          />
         )}
 
         {['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status) && (
