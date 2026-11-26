@@ -45,7 +45,9 @@ interface RevisionRequestsProps {
   commissionId?: string;
   orderTitle: string;
   deliverableId?: string;
+  refreshKey?: number;
   readOnly?: boolean;
+  onCommissionChanged?: () => Promise<void>;
   onRevisionCountChange?: (count: number) => void;
 }
 
@@ -56,7 +58,7 @@ interface RevisionRequestsProps {
  * Renders nothing fake: if Supabase isn't configured, it says so
  * instead of simulating success.
  */
-export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverableId, readOnly = false, onRevisionCountChange }: RevisionRequestsProps) {
+export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverableId, refreshKey = 0, readOnly = false, onCommissionChanged, onRevisionCountChange }: RevisionRequestsProps) {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>('loading');
   const [commission, setCommission] = useState<CommissionLink | null>(null);
@@ -91,7 +93,7 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
         showFeedback(err instanceof Error ? err.message : 'Could not load revision requests.', true);
       }
     },
-    [showFeedback],
+    [onRevisionCountChange, showFeedback],
   );
 
   useEffect(() => {
@@ -128,7 +130,7 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
     return () => {
       active = false;
     };
-  }, [orderRef, commissionId, user, refreshRevisions, showFeedback, onRevisionCountChange]);
+  }, [orderRef, commissionId, user, refreshKey, refreshRevisions, showFeedback]);
 
   useEffect(() => {
     if (phase !== 'unlinked' || !user) return;
@@ -188,7 +190,9 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
       if (deliverableId) await createDeliverableRevisionRequest(commission.id, deliverableId, newDescription);
       else await createRevisionRequest(commission.id, newDescription);
       setNewDescription('');
+      setCommission((current) => current ? { ...current, status: 'REVISION_REQUESTED' } : current);
       await refreshRevisions(commission.id);
+      await onCommissionChanged?.();
       showFeedback('Revision request submitted.');
     } catch (err) {
       showFeedback(err instanceof Error ? err.message : 'Could not create the revision request.', true);
@@ -235,7 +239,9 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
     setBusyRevisionId(revisionId);
     try {
       await setRevisionStatus(revisionId, 'RESOLVED');
+      setCommission((current) => current ? { ...current, status: 'IN_PROGRESS' } : current);
       await refreshRevisions(commission.id);
+      await onCommissionChanged?.();
       showFeedback('Revision marked resolved.');
     } catch (err) {
       showFeedback(err instanceof Error ? err.message : 'Could not resolve this revision request.', true);
@@ -246,6 +252,10 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
 
   const isClient = !!user && !!commission && user.id === commission.client_id;
   const isArtist = !!user && !!commission && user.id === commission.artist_id;
+  const canCreateRevision = isClient
+    && !readOnly
+    && commission?.status === 'IN_PROGRESS'
+    && !revisions.some((revision) => ['OPEN', 'IN_PROGRESS', 'SUBMITTED'].includes(revision.status));
 
   return (
     <>
@@ -329,7 +339,7 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
 
       {phase === 'ready' && commission && (
         <>
-          {isClient && !readOnly && (
+          {canCreateRevision && (
             <form onSubmit={handleCreateRequest} className="card" style={{ marginBottom: 14 }}>
               <label className="field-label" htmlFor="revision-desc">
                 {deliverableId ? 'Revision request for selected deliverable' : 'New revision request'}
@@ -399,11 +409,17 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
                       disabled={busy}
                       onClick={() => handleStartWork(rev.id)}
                     >
-                      {busy ? 'Updating…' : 'Start Work'}
+                      {busy ? 'Updating…' : 'Start Revision'}
                     </button>
                   )}
 
-                  {isArtist && !readOnly && rev.status === 'IN_PROGRESS' && (
+                  {isArtist && !readOnly && rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
+                    <div className="t-xs c-low" style={{ marginTop: 10 }}>
+                      Upload the revised file in Deliverables above. This request will be marked submitted after the upload succeeds.
+                    </div>
+                  )}
+
+                  {isArtist && !readOnly && !rev.deliverable_id && rev.status === 'IN_PROGRESS' && (
                     <div style={{ marginTop: 12 }}>
                       <textarea
                         className="textarea-field"
@@ -434,7 +450,13 @@ export function RevisionRequests({ orderRef, commissionId, orderTitle, deliverab
                     </div>
                   )}
 
-                  {isClient && !readOnly && rev.status === 'SUBMITTED' && (
+                  {isClient && !readOnly && rev.deliverable_id && rev.status === 'SUBMITTED' && (
+                    <div className="t-xs c-low" style={{ marginTop: 10 }}>
+                      Review the revised file in Deliverables above. Approving it resolves this request.
+                    </div>
+                  )}
+
+                  {isClient && !readOnly && !rev.deliverable_id && rev.status === 'SUBMITTED' && (
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"

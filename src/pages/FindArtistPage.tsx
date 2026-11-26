@@ -7,14 +7,16 @@ import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { initialsFor, listArtistProfiles, searchProfiles, type PublicProfile } from '../lib/supabaseData';
 import { createCommissionRequest, getCommissionById } from '../lib/supabaseRevisions';
+import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import { validateRequired } from '../utils/validators';
+import { validateOptionalCommissionBudget } from '../lib/commissionWorkflow';
 import './FindArtistPage.css';
 
 /**
  * Real "Start a Commission" flow — only ever lists real registered
  * artist accounts (profiles.role = 'artist'), never the mock artist
- * directory. Selecting one and confirming a title calls
- * get_or_create_commission for real; there is no fake success state.
+ * directory. Submitting a request calls create_commission_request; there
+ * is no fake success state.
  */
 export function FindArtistPage() {
   const navigate = useNavigate();
@@ -31,8 +33,13 @@ export function FindArtistPage() {
   const [selected, setSelected] = useState<PublicProfile | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [targetDeadline, setTargetDeadline] = useState('');
+  const [budget, setBudget] = useState('');
+  const [budgetCurrency, setBudgetCurrency] = useState('PHP');
   const [titleError, setTitleError] = useState<string | undefined>();
   const [descriptionError, setDescriptionError] = useState<string | undefined>();
+  const [targetDeadlineError, setTargetDeadlineError] = useState<string | undefined>();
+  const [budgetError, setBudgetError] = useState<string | undefined>();
   const [starting, setStarting] = useState(false);
   const [submittedRequest, setSubmittedRequest] = useState<{ id: string; created: boolean; snapshot?: { name: string | null; amount: number | null; currency: string | null; turnaroundDays: number | null } } | null>(null);
   const [feedback, setFeedback] = useState<{ text: string; isError: boolean } | null>(null);
@@ -111,12 +118,23 @@ export function FindArtistPage() {
     }
     const nextTitleError = validateRequired(title, 'Commission title');
     const nextDescriptionError = validateRequired(description, 'Commission description');
+    const nextTargetDeadlineError = validateOptionalTargetDeadline(targetDeadline);
+    const nextBudgetError = validateOptionalCommissionBudget(budget, budgetCurrency);
     setTitleError(nextTitleError);
     setDescriptionError(nextDescriptionError);
-    if (nextTitleError || nextDescriptionError) return;
+    setTargetDeadlineError(nextTargetDeadlineError);
+    setBudgetError(nextBudgetError);
+    if (nextTitleError || nextDescriptionError || nextTargetDeadlineError || nextBudgetError) return;
     setStarting(true);
     try {
-      const result = await createCommissionRequest(selected.id, title, description);
+      const result = await createCommissionRequest(
+        selected.id,
+        title,
+        description,
+        targetDeadline || null,
+        budget.trim() ? Number(budget) : null,
+        budget.trim() ? budgetCurrency.trim().toUpperCase() : null,
+      );
       const savedCommission = await getCommissionById(result.commissionId);
       setSubmittedRequest({
         id: result.commissionId,
@@ -131,9 +149,11 @@ export function FindArtistPage() {
       showFeedback(result.created ? 'Commission request sent' : 'A commission request is already pending for this artist.');
     } catch (err) {
       const message = err instanceof Error ? err.message.toLowerCase() : '';
-      showFeedback(message.includes('artist_not_accepting_commissions')
-        ? 'This artist is no longer accepting new commissions.'
-        : 'Could not start this commission.', true);
+      showFeedback(message.includes('target_deadline_in_past')
+        ? 'Target deadline cannot be in the past.'
+        : message.includes('artist_not_accepting_commissions')
+          ? 'This artist is no longer accepting new commissions.'
+          : 'Could not start this commission.', true);
     } finally {
       setStarting(false);
     }
@@ -226,11 +246,55 @@ export function FindArtistPage() {
                   setDescription(e.target.value);
                   if (descriptionError) setDescriptionError(undefined);
                 }}
-                placeholder="Describe the artwork, style, references, and deadline."
+                placeholder="Describe the artwork, style, and references."
                 rows={4}
                 style={{ marginBottom: descriptionError ? 6 : 12 }}
               />
               {descriptionError && <div className="field-error" style={{ marginBottom: 12 }}>{descriptionError}</div>}
+              <label className="field-label" htmlFor="commission-target-deadline">Target Deadline (Optional)</label>
+              <input
+                id="commission-target-deadline"
+                className={`input-field${targetDeadlineError ? ' is-error' : ''}`}
+                type="date"
+                min={getUtcDateInputValue()}
+                value={targetDeadline}
+                onChange={(event) => {
+                  setTargetDeadline(event.target.value);
+                  if (targetDeadlineError) setTargetDeadlineError(undefined);
+                }}
+                aria-describedby={targetDeadlineError ? 'commission-target-deadline-error' : undefined}
+                style={{ marginBottom: targetDeadlineError ? 6 : 12 }}
+              />
+              {targetDeadlineError && <div id="commission-target-deadline-error" className="field-error" style={{ marginBottom: 12 }}>{targetDeadlineError}</div>}
+              <label className="field-label" htmlFor="commission-budget">Budget (Optional)</label>
+              <div className="row gap-8" style={{ marginBottom: budgetError ? 6 : 12 }}>
+                <input
+                  id="commission-budget"
+                  className={`input-field${budgetError ? ' is-error' : ''}`}
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={budget}
+                  onChange={(event) => {
+                    setBudget(event.target.value);
+                    if (budgetError) setBudgetError(undefined);
+                  }}
+                  placeholder="Amount"
+                  aria-label="Optional commission budget"
+                />
+                <input
+                  className={`input-field${budgetError ? ' is-error' : ''}`}
+                  type="text"
+                  maxLength={3}
+                  value={budgetCurrency}
+                  onChange={(event) => {
+                    setBudgetCurrency(event.target.value.toUpperCase());
+                    if (budgetError) setBudgetError(undefined);
+                  }}
+                  aria-label="Budget currency code"
+                />
+              </div>
+              {budgetError && <div className="field-error" role="alert" style={{ marginBottom: 12 }}>{budgetError}</div>}
               {submittedRequest && (
                 <div className="card" style={{ marginBottom: 12, padding: '12px 14px' }} role="status">
                   <div className="t-sm fw-700">{submittedRequest.created ? 'Commission request sent' : 'Existing commission request'}</div>
@@ -253,8 +317,13 @@ export function FindArtistPage() {
                     setSelected(null);
                     setTitle('');
                     setDescription('');
+                    setTargetDeadline('');
+                      setBudget('');
+                      setBudgetCurrency('PHP');
                     setTitleError(undefined);
                     setDescriptionError(undefined);
+                    setTargetDeadlineError(undefined);
+                    setBudgetError(undefined);
                     setSubmittedRequest(null);
                   }}
                 >

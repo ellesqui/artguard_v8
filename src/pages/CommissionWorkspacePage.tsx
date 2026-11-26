@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRef } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -16,13 +16,15 @@ import { useMockToast } from '../components/ui/MockToast';
 import { useAuth } from '../context/AuthContext';
 import { useChat } from '../context/ChatContext';
 import { getPublicProfile, initialsFor, type PublicProfile } from '../lib/supabaseData';
-import { cancelCommission, completeCommission, createCommissionProgress, getCommissionById, getCommissionDueAt, isCommissionOverdue, listCommissionProgress, listRevisionRequests, startCommission, type CommissionLink, type CommissionProgressUpdate, type RevisionRequest } from '../lib/supabaseRevisions';
+import { acceptDirectCommissionQuote, cancelCommission, completeCommission, createCommissionProgress, getCommissionById, getCommissionDueAt, isCommissionOverdue, listCommissionProgress, listRevisionRequests, startCommission, type CommissionLink, type CommissionProgressUpdate, type RevisionRequest } from '../lib/supabaseRevisions';
 import { listArtistReviews, submitArtistReview, updateArtistReview, type ArtistReview, type SubmittedArtistReview } from '../lib/supabaseReviews';
 import { approveCommissionDeliverable, createCommissionDeliverableSignedUrl, listCommissionDeliverables, uploadCommissionDeliverable, type CommissionDeliverable } from '../lib/supabaseDeliverables';
 import { approveCommissionMilestone, createDefaultCommissionMilestones, listCommissionMilestones, startCommissionMilestone, submitCommissionMilestone, type CommissionMilestone } from '../lib/supabaseMilestones';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
 import { getCommissionPayment, simulateCommissionPaymentDemoSuccess, simulateCommissionPaymentRefund, type CommissionPayment } from '../lib/supabasePayments';
 import { supabaseConfigurationStatus } from '../lib/supabase';
+import { formatDateOnly } from '../lib/commissionDeadline';
+import { getCommissionCompletionBlocker } from '../lib/commissionWorkflow';
 
 const STATUS_DOT_STYLE = {
   approved: { background: 'var(--ag-success)' },
@@ -225,9 +227,12 @@ export function CommissionWorkspacePage() {
   const [demoPaymentDialogCommissionId, setDemoPaymentDialogCommissionId] = useState<string | null>(null);
   const [revisionRequests, setRevisionRequests] = useState<RevisionRequest[]>([]);
   const [revisionRequestsLoading, setRevisionRequestsLoading] = useState(false);
+  const [revisionRequestsError, setRevisionRequestsError] = useState<string | undefined>();
+  const [revisionRefreshKey, setRevisionRefreshKey] = useState(0);
   const [completionLoading, setCompletionLoading] = useState(false);
   const [completionDialogOpen, setCompletionDialogOpen] = useState(false);
   const [completionError, setCompletionError] = useState<string | undefined>();
+  const [acceptingQuote, setAcceptingQuote] = useState(false);
   const [reviewCheckState, setReviewCheckState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [reviewCheckRetry, setReviewCheckRetry] = useState(0);
   const [commissionReview, setCommissionReview] = useState<ArtistReview | SubmittedArtistReview | null>(null);
@@ -237,6 +242,24 @@ export function CommissionWorkspacePage() {
   const [reviewText, setReviewText] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitError, setReviewSubmitError] = useState<string | undefined>();
+  const milestoneInitializationInFlight = useRef(new Set<string>());
+  const handleRevisionCountChange = useCallback((count: number) => {
+    if (count > 0) setRevisionSectionVisible(true);
+  }, []);
+  const currentCommissionId = realCommission?.id;
+  const refreshCommissionStatus = useCallback(async () => {
+    if (!currentCommissionId) return;
+    try {
+      const refreshed = await getCommissionById(currentCommissionId);
+      if (!refreshed) {
+        setRevisionRequestsError('The action succeeded, but commission status could not be refreshed.');
+        return;
+      }
+      setRealCommission(refreshed);
+    } catch {
+      setRevisionRequestsError('The action succeeded, but commission status could not be refreshed.');
+    }
+  }, [currentCommissionId]);
   const deliverableFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -370,9 +393,15 @@ export function CommissionWorkspacePage() {
     void listCommissionMilestones(realCommission.id)
       .then(async (rows) => {
         if (!active) return;
-        if (rows.length === 0 && user?.id === realCommission.artist_id && realCommission.status === 'ACCEPTED') {
-          const created = await createDefaultCommissionMilestones(realCommission.id);
-          if (active) setMilestones(created);
+        if (rows.length === 0 && user?.id === realCommission.artist_id && realCommission.status === 'IN_PROGRESS') {
+          if (milestoneInitializationInFlight.current.has(realCommission.id)) return;
+          milestoneInitializationInFlight.current.add(realCommission.id);
+          try {
+            const created = await createDefaultCommissionMilestones(realCommission.id);
+            if (active) setMilestones(created);
+          } finally {
+            milestoneInitializationInFlight.current.delete(realCommission.id);
+          }
         } else if (active) {
           setMilestones(rows);
         }
@@ -401,7 +430,7 @@ export function CommissionWorkspacePage() {
       .then(async (rows) => {
         if (!active) return;
         setDeliverables(rows);
-        const entries = await Promise.all(rows.filter((row) => row.status === 'SUBMITTED').map(async (row) => {
+        const entries = await Promise.all(rows.filter((row) => row.status === 'SUBMITTED' || row.status === 'APPROVED').map(async (row) => {
           try {
             return [row.id, await createCommissionDeliverableSignedUrl(realCommission.id, row)] as const;
           } catch {
@@ -422,21 +451,29 @@ export function CommissionWorkspacePage() {
   useEffect(() => {
     if (!realCommission || !['IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status)) {
       setRevisionRequests([]);
+      setRevisionRequestsError(undefined);
       setRevisionRequestsLoading(false);
       return;
     }
     let active = true;
     setRevisionRequestsLoading(true);
+    setRevisionRequestsError(undefined);
     void listRevisionRequests(realCommission.id)
       .then((rows) => { if (active) setRevisionRequests(rows); })
-      .catch(() => { if (active) setRevisionRequests([]); })
+      .catch((error) => {
+        if (active) setRevisionRequestsError(error instanceof Error ? error.message : 'Could not load revision requests.');
+      })
       .finally(() => { if (active) setRevisionRequestsLoading(false); });
     return () => { active = false; };
-  }, [realCommission]);
+  }, [realCommission, revisionRefreshKey]);
 
   const handleStartCommission = async () => {
     if (!realCommission || !user || user.id !== realCommission.artist_id || startingCommission) return;
-    if (realCommission.service_id !== null || realCommission.public_post_id !== null) {
+    if (
+      realCommission.service_id !== null
+      || realCommission.public_post_id !== null
+      || realCommission.quote_status === 'ACCEPTED'
+    ) {
       const paymentIsKnown = paymentStatusCommissionId === realCommission.id && !paymentLoading && !paymentError;
       const matchingPaymentIsPaid = paymentIsKnown
         && commissionPayment?.commission_id === realCommission.id
@@ -459,8 +496,6 @@ export function CommissionWorkspacePage() {
     try {
       const updated = await startCommission(realCommission.id);
       setRealCommission(updated);
-      const createdMilestones = await createDefaultCommissionMilestones(updated.id);
-      setMilestones(createdMilestones);
       showToast('Commission started');
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
@@ -584,7 +619,11 @@ export function CommissionWorkspacePage() {
       showToast('Commission completed');
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
-      const friendlyMessage = message.includes('milestone')
+      const friendlyMessage = message.includes('at least one approved deliverable')
+        ? 'No approved final deliverable yet.'
+        : message.includes('active deliverables')
+          ? 'One or more deliverables are still awaiting review.'
+          : message.includes('milestone')
         ? 'All milestones must be approved before completion.'
         : message.includes('deliverable')
           ? 'All deliverables must be approved before completion.'
@@ -671,6 +710,32 @@ export function CommissionWorkspacePage() {
       setPaymentError('Could not load payment status. Please try again.');
     } finally {
       setPaymentLoading(false);
+    }
+  };
+
+  const handleAcceptDirectQuote = async () => {
+    if (
+      !realCommission
+      || !user
+      || user.role !== 'client'
+      || user.id !== realCommission.client_id
+      || realCommission.status !== 'REQUESTED'
+      || realCommission.quote_status !== 'PENDING_CLIENT'
+      || acceptingQuote
+    ) return;
+    setAcceptingQuote(true);
+    try {
+      const updated = await acceptDirectCommissionQuote(realCommission.id);
+      setRealCommission(updated);
+      showToast('Quote accepted. You can now confirm simulated payment.');
+      void refreshPaymentStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      showToast(message.includes('No valid artist quote')
+        ? 'This quote is no longer available. Refresh the commission.'
+        : 'Could not accept this quote. Refresh and try again.');
+    } finally {
+      setAcceptingQuote(false);
     }
   };
 
@@ -869,14 +934,26 @@ export function CommissionWorkspacePage() {
       const title = deliverableTitle.trim() || file.name.replace(/\.[^/.]+$/, '').trim() || 'Commission deliverable';
       const submitted = await uploadCommissionDeliverable(user.id, realCommission.id, title, deliverableDescription.trim(), file);
       setDeliverables((current) => [submitted, ...current]);
+      setRevisionRefreshKey((current) => current + 1);
+      await refreshCommissionStatus();
       setDeliverableTitle('');
       setDeliverableDescription('');
       if (submitted.protected_storage_path) {
-        const url = await createCommissionDeliverableSignedUrl(realCommission.id, submitted);
-        setDeliverableUrls((current) => ({ ...current, [submitted.id]: url }));
+        try {
+          const url = await createCommissionDeliverableSignedUrl(realCommission.id, submitted);
+          setDeliverableUrls((current) => ({ ...current, [submitted.id]: url }));
+        } catch {
+          setDeliverablesError('The deliverable was submitted, but its preview could not be loaded.');
+        }
       }
       showToast('Deliverable submitted');
     } catch (error) {
+      try {
+        const refreshedDeliverables = await listCommissionDeliverables(realCommission.id);
+        setDeliverables(refreshedDeliverables);
+      } catch {
+        setDeliverablesError('The upload failed and deliverable status could not be refreshed.');
+      }
       showToast(error instanceof Error ? error.message : 'Could not submit deliverable.');
     } finally {
       setUploadingDeliverable(false);
@@ -890,6 +967,10 @@ export function CommissionWorkspacePage() {
     try {
       const approved = await approveCommissionDeliverable(deliverableId);
       setDeliverables((current) => current.map((item) => item.id === approved.id ? approved : item));
+      setRevisionRequests((current) => current.map((revision) => revision.response_deliverable_id === approved.id
+        ? { ...revision, status: 'RESOLVED' }
+        : revision));
+      setRevisionRefreshKey((current) => current + 1);
       showToast('Deliverable Approved');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not approve deliverable.');
@@ -942,6 +1023,7 @@ export function CommissionWorkspacePage() {
     }
 
     const isClient = realCommission.client_id === user.id;
+    const isArtist = realCommission.artist_id === user.id;
     const canManagePayment = isClient && user.role === 'client';
     const canRefundPayment = canManagePayment
       && orderId === realCommission.id
@@ -962,7 +1044,9 @@ export function CommissionWorkspacePage() {
     const paymentAvailable = hasCommissionPaymentPrice(realCommission);
     const showPaymentPanel = realCommission.status === 'ACCEPTED' || commissionPayment !== null;
     const isPublicPostCommission = realCommission.public_post_id !== null;
-    const requiresPaidPaymentBeforeStart = realCommission.service_id !== null || isPublicPostCommission;
+    const requiresPaidPaymentBeforeStart = realCommission.service_id !== null
+      || isPublicPostCommission
+      || realCommission.quote_status === 'ACCEPTED';
     const paymentStatusKnown = paymentStatusCommissionId === realCommission.id && !paymentLoading && !paymentError;
     const canStartDemoPayment = canManagePayment
       && orderId === realCommission.id
@@ -1004,20 +1088,10 @@ export function CommissionWorkspacePage() {
       && commissionPayment.provider === 'DEMO_SIMULATION'
       && commissionPayment.provider_reference === null
       && !commissionPayment.provider_verified_at;
-    const matchingPaymentParties = paymentStatusKnown
-      && commissionPayment?.commission_id === realCommission.id
-      && commissionPayment.payer_id === realCommission.client_id
-      && commissionPayment.payee_id === realCommission.artist_id;
     const paymentAmountMatchesCommission = realCommission.amount !== null
       && realCommission.amount !== undefined
       && commissionPayment?.amount === realCommission.amount
       && commissionPayment.currency === realCommission.currency;
-    const matchingPaymentRefunded = matchingPaymentParties
-      && paymentAmountMatchesCommission
-      && commissionPayment.status === 'REFUNDED';
-    const matchingDemoPaymentRefunded = matchingPaymentRefunded
-      && Boolean(commissionPayment.demo_paid_at)
-      && commissionPayment.provider === 'DEMO_SIMULATION';
     const demoPaymentReceipt = demoPaymentDialogStep === 'receipt'
       && matchingDemoPaymentIsPaid
       && paymentAmountMatchesCommission
@@ -1048,49 +1122,8 @@ export function CommissionWorkspacePage() {
               : realCommission.status === 'ACCEPTED' && paymentAvailable
                 ? { label: 'Awaiting payment', tone: 'c-warning' }
                 : !paymentAvailable
-                  ? { label: 'Payment unavailable', tone: 'c-low' }
+                  ? { label: 'Price not agreed', tone: 'c-low' }
                   : { label: 'Payment status unavailable', tone: 'c-low' };
-    const escrowStatus = paymentLoading
-      ? 'CHECKING PAYMENT'
-      : !paymentStatusKnown
-        ? 'STATUS UNAVAILABLE'
-        : matchingPaymentRefunded
-          ? matchingDemoPaymentRefunded ? 'DEMO REFUND' : 'REFUNDED'
-          : matchingPaymentIsPaid
-            ? matchingDemoPaymentIsPaid ? 'DEMO PAYMENT SUCCESSFUL' : 'ESCROW NOT TRACKED'
-            : matchingPaymentParties
-              && commissionPayment.status === 'PAID'
-              && paymentAmountMatchesCommission
-              && !commissionPayment.provider_verified_at
-              ? 'PAID · UNVERIFIED'
-            : matchingPaymentParties
-              && (commissionPayment.status === 'PAID' || commissionPayment.status === 'REFUNDED')
-              && !paymentAmountMatchesCommission
-              ? 'PAYMENT MISMATCH'
-            : matchingPaymentParties && commissionPayment.status === 'VOIDED'
-              ? 'VOIDED'
-              : matchingPaymentParties && commissionPayment.status === 'FAILED'
-                ? 'PAYMENT FAILED'
-                : matchingPaymentParties && commissionPayment.status === 'PENDING'
-                  ? 'AWAITING DEMO PAYMENT'
-                  : realCommission.status === 'REQUESTED'
-                    ? 'NOT YET PAYABLE'
-                    : realCommission.status === 'ACCEPTED' && paymentAvailable
-                      ? 'AWAITING DEMO PAYMENT'
-                      : !paymentAvailable
-                        ? 'AMOUNT UNAVAILABLE'
-                        : commissionPayment
-                          ? 'PAYMENT DETAILS UNAVAILABLE'
-                          : 'NOT PAID';
-    const escrowStatusClass = matchingPaymentIsPaid
-      ? 'badge-accent'
-      : matchingPaymentRefunded
-        ? 'badge-success'
-        : escrowStatus === 'PAYMENT FAILED'
-          ? 'badge-danger'
-          : escrowStatus === 'AWAITING DEMO PAYMENT' || escrowStatus === 'AMOUNT UNAVAILABLE' || escrowStatus === 'PAYMENT MISMATCH' || escrowStatus === 'PAID · UNVERIFIED'
-            ? 'badge-warning'
-            : 'badge-accent';
       const isReviewEligibleClient = isClient && user.role === 'client';
     const reviewEditEligible = isReviewEligibleClient
       && realCommission.status === 'COMPLETED'
@@ -1100,21 +1133,31 @@ export function CommissionWorkspacePage() {
     const dueAt = getCommissionDueAt(realCommission);
     const now = new Date();
     const isActiveDeadlineStatus = realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED';
-    const isHistoricalDeadlineStatus = realCommission.status === 'COMPLETED' || realCommission.status === 'CANCELLED';
     const deadlineOverdue = isActiveDeadlineStatus && isCommissionOverdue(realCommission, now);
     const dueAtMilliseconds = dueAt ? Date.parse(dueAt) : Number.NaN;
     const remainingMilliseconds = dueAtMilliseconds - now.getTime();
     const remainingDays = remainingMilliseconds > 0 ? Math.ceil(remainingMilliseconds / 86_400_000) : 0;
     const overdueWholeDays = deadlineOverdue ? Math.floor((now.getTime() - dueAtMilliseconds) / 86_400_000) : 0;
-    const completionReady = realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED'
-      ? milestones.length > 0
-        && milestones.every((milestone) => milestone.status === 'APPROVED')
-        && !deliverablesLoading
-        && !deliverablesError
-        && deliverables.every((deliverable) => deliverable.status === 'APPROVED')
-        && !revisionRequestsLoading
-        && revisionRequests.every((revision) => revision.status === 'RESOLVED')
-      : false;
+    const completionBlocker = getCommissionCompletionBlocker({
+      commissionStatus: realCommission.status,
+      deliverables,
+      deliverablesLoading,
+      deliverablesError,
+      milestones,
+      milestonesLoading,
+      milestonesError,
+      revisions: revisionRequests,
+      revisionsLoading: revisionRequestsLoading,
+      revisionsError: revisionRequestsError,
+    });
+    const completionReady = completionBlocker === null;
+    const currentMilestoneIndex = milestones.findIndex((milestone) => milestone.status === 'IN_PROGRESS');
+    const activeMilestoneIndex = currentMilestoneIndex >= 0
+      ? currentMilestoneIndex
+      : milestones.findIndex((milestone) => milestone.status === 'SUBMITTED');
+    const nextMilestoneIndex = activeMilestoneIndex >= 0
+      ? activeMilestoneIndex
+      : milestones.findIndex((milestone) => milestone.status === 'PENDING');
 
     return (
       <ScreenShell
@@ -1171,7 +1214,7 @@ export function CommissionWorkspacePage() {
             </button>
           </div>
           {((isClient && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status))
-            || (!isClient && ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status))) && (
+            || (isArtist && ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status))) && (
             <button type="button" className="btn btn-ghost btn-sm commission-cancel-button" style={{ marginTop: 10, color: 'var(--ag-danger)' }} onClick={openCancellationDialog} disabled={cancellingCommission}>
               {cancellingCommission ? 'Cancelling…' : 'Cancel Commission'}
             </button>
@@ -1179,35 +1222,63 @@ export function CommissionWorkspacePage() {
           <div className="workspace-summary-details" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '10px 18px', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
             <div><div className="t-xs c-low">Title</div><div className="t-sm fw-600">{realCommission.title}</div></div>
             {realCommission.service_name_snapshot && <div><div className="t-xs c-low">Service</div><div className="t-sm c-mid">{realCommission.service_name_snapshot}</div></div>}
-            {realCommission.amount !== null && realCommission.amount !== undefined && realCommission.currency && <div><div className="t-xs c-low">Agreed price</div><div className="t-sm c-mid">{realCommission.currency} {realCommission.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>}
-            {realCommission.turnaround_days_snapshot && <div><div className="t-xs c-low">Turnaround</div><div className="t-sm c-mid">{realCommission.turnaround_days_snapshot} days</div></div>}
+            {realCommission.client_budget !== null && realCommission.client_budget_currency && <div><div className="t-xs c-low">Client budget · guide only</div><div className="t-sm c-mid">{formatDemoAmount(realCommission.client_budget, realCommission.client_budget_currency)}</div></div>}
+            {realCommission.proposed_amount !== null && realCommission.proposed_amount !== undefined && realCommission.proposed_currency && <div><div className="t-xs c-low">Proposed price</div><div className="t-sm c-mid">{formatDemoAmount(realCommission.proposed_amount, realCommission.proposed_currency)}</div></div>}
+            <div><div className="t-xs c-low">Agreed price</div><div className="t-sm c-mid">{realCommission.amount !== null && realCommission.amount !== undefined && realCommission.currency
+              ? `${realCommission.currency} ${realCommission.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : realCommission.quote_status === 'PENDING_CLIENT' ? 'Awaiting Client approval' : 'Not agreed'}</div></div>
+            <div><div className="t-xs c-low">Estimated working hours</div><div className="t-sm c-mid">{realCommission.estimated_working_hours !== null && realCommission.estimated_working_hours !== undefined ? `${realCommission.estimated_working_hours} hours` : 'Not provided'}</div></div>
+            {realCommission.turnaround_days_snapshot && <div><div className="t-xs c-low">Service turnaround estimate</div><div className="t-sm c-mid">{realCommission.turnaround_days_snapshot} days</div></div>}
             {formatCommissionDate(realCommission.requested_at) && <div><div className="t-xs c-low">Requested</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.requested_at)}</div></div>}
             {formatCommissionDate(realCommission.accepted_at) && <div><div className="t-xs c-low">Accepted</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.accepted_at)}</div></div>}
             {formatCommissionDate(realCommission.started_at) && <div><div className="t-xs c-low">Started</div><div className="t-sm c-mid">{formatCommissionDate(realCommission.started_at)}</div></div>}
-            {realCommission.status !== 'REJECTED' && (
-              <div>
-                <div className="t-xs c-low">Deadline</div>
-                {dueAt && (isActiveDeadlineStatus || isHistoricalDeadlineStatus) ? (
-                  <>
-                    <div className="t-sm c-mid">Due {formatCommissionDate(dueAt)}</div>
-                    {isActiveDeadlineStatus && (deadlineOverdue ? (
-                      <div className="t-xs c-danger" style={{ marginTop: 3 }}>
-                        {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
-                      </div>
-                    ) : remainingMilliseconds === 0 ? (
-                      <div className="t-xs c-warning" style={{ marginTop: 3 }}>Due now</div>
-                    ) : (
-                      <div className="t-xs c-low" style={{ marginTop: 3 }}>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</div>
-                    ))}
-                  </>
-                ) : (
-                  <div className="t-sm c-mid">No deadline set</div>
-                )}
-              </div>
-            )}
+            <div>
+              <div className="t-xs c-low">Target Deadline</div>
+              {formatDateOnly(realCommission.target_deadline) ? (
+                <>
+                  <div className="t-sm c-mid">{formatDateOnly(realCommission.target_deadline)}</div>
+                  {isActiveDeadlineStatus && (deadlineOverdue ? (
+                    <div className="t-xs c-danger" style={{ marginTop: 3 }}>
+                      {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
+                    </div>
+                  ) : remainingMilliseconds === 0 ? (
+                    <div className="t-xs c-warning" style={{ marginTop: 3 }}>Due now</div>
+                  ) : (
+                    <div className="t-xs c-low" style={{ marginTop: 3 }}>{remainingDays} day{remainingDays === 1 ? '' : 's'} remaining</div>
+                  ))}
+                </>
+              ) : (
+                <div className="t-sm c-mid">No deadline set</div>
+              )}
+            </div>
             {formatCommissionDate(realCommission.rejected_at) && <div><div className="t-xs c-low">Rejected</div><div className="t-sm c-danger">{formatCommissionDate(realCommission.rejected_at)}</div></div>}
           </div>
-          {realCommission.status === 'REQUESTED' && <div className="t-xs c-warning" style={{ marginTop: 12 }}>Awaiting the artist&apos;s response.</div>}
+          {realCommission.status === 'REQUESTED' && (
+            <div className="t-xs c-warning" style={{ marginTop: 12 }}>
+              {realCommission.quote_status === 'AWAITING_ARTIST'
+                ? 'Waiting for the Artist to send a price quote.'
+                : realCommission.quote_status === 'PENDING_CLIENT'
+                  ? 'Review the Artist’s proposed price and estimated working hours below.'
+                  : 'Awaiting the artist’s response.'}
+            </div>
+          )}
+          {isClient && realCommission.status === 'REQUESTED' && realCommission.quote_status === 'PENDING_CLIENT' && (
+            <div className="card" style={{ marginTop: 12, padding: 12 }}>
+              <div className="t-sm fw-700">Artist quote</div>
+              <div className="t-xs c-low" style={{ marginTop: 4 }}>
+                This proposed price is separate from your budget guide. Estimated working hours are not a delivery-date guarantee. Cancel the request if you do not agree.
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                style={{ marginTop: 10 }}
+                disabled={acceptingQuote}
+                onClick={() => void handleAcceptDirectQuote()}
+              >
+                {acceptingQuote ? 'Accepting…' : 'Accept Quote'}
+              </button>
+            </div>
+          )}
           {realCommission.status === 'ACCEPTED' && <div className="t-xs c-success" style={{ marginTop: 12 }}>Commission request accepted.</div>}
           {realCommission.status === 'REJECTED' && <div className="t-xs c-danger" style={{ marginTop: 8 }}>Commission request rejected{isClient && realCommission.rejection_reason ? `: ${realCommission.rejection_reason}` : '.'}</div>}
           {realCommission.status === 'CANCELLED' && (
@@ -1271,9 +1342,37 @@ export function CommissionWorkspacePage() {
                   Complete Commission
                 </button>
               ) : (
-                <div className="t-xs c-low">Complete all milestones, approve any deliverables, and resolve all revisions before completing this commission.</div>
+                <div className="t-xs c-low">
+                  {completionBlocker === 'deliverables-loading'
+                    ? 'Checking deliverables…'
+                    : completionBlocker === 'milestones-loading'
+                      ? 'Checking milestones…'
+                      : completionBlocker === 'revisions-loading'
+                        ? 'Checking revision status…'
+                        : completionBlocker === 'deliverables-unavailable'
+                          ? 'Deliverables could not be verified. Retry before completing.'
+                          : completionBlocker === 'milestones-unavailable'
+                            ? 'Milestones could not be verified. Retry before completing.'
+                            : completionBlocker === 'revisions-unavailable'
+                              ? 'Revision status could not be verified. Retry before completing.'
+                              : completionBlocker === 'no-approved-deliverable'
+                                ? 'No approved final deliverable yet.'
+                                : completionBlocker === 'deliverables-awaiting-review'
+                                  ? 'One or more deliverables are still awaiting review.'
+                                  : completionBlocker === 'milestones-incomplete'
+                                    ? 'Complete all milestones before completing.'
+                                    : completionBlocker === 'revisions-unresolved'
+                                      ? 'Revisions are still unresolved.'
+                                      : 'Commission must be in progress before it can be completed.'}
+                </div>
               )}
               {completionError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>{completionError}</div>}
+              {revisionRequestsError && (
+                <div className="t-xs c-danger" role="alert" style={{ marginTop: 8 }}>
+                  Revision status could not be verified. {revisionRequestsError}
+                  <button type="button" className="link-sm" onClick={() => setRevisionRefreshKey((current) => current + 1)}>Retry</button>
+                </div>
+              )}
             </div>
           )}
           <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
@@ -1299,7 +1398,7 @@ export function CommissionWorkspacePage() {
             <div className="mono workspace-payment-amount">
               {paymentAvailable
                 ? formatDemoAmount(realCommission.amount!, realCommission.currency!)
-                : 'Unavailable'}
+                : 'Price not agreed'}
             </div>
             <div className={`workspace-payment-status ${paymentLoading ? 'c-low' : paymentCardStatus.tone}`} role="status">
               {paymentLoading ? 'Loading payment status…' : paymentCardStatus.label}
@@ -1389,12 +1488,24 @@ export function CommissionWorkspacePage() {
         {(realCommission.status === 'ACCEPTED' || realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
           <section className="card workspace-milestone-card ag-liquid-glass-soft" style={{ marginBottom: 16 }}>
             <div className="row-between" style={{ marginBottom: 12 }}>
-              <span className="section-title">Milestone Progress</span>
+              <span className="section-title">Work Stages</span>
               {progressUpdates[0] && <span className="badge badge-accent">{progressUpdates[0].progress_percent}%</span>}
             </div>
+            <p className="t-xs c-low" style={{ margin: '0 0 12px', lineHeight: 1.5 }}>
+              Formal stages track client reviews. Progress updates are informational and do not replace submitted work.
+            </p>
+            {realCommission.status === 'REVISION_REQUESTED' && (
+              <p className="t-xs c-warning" style={{ margin: '0 0 12px', lineHeight: 1.5 }}>
+                {isArtist
+                  ? 'Next: start the revision, then upload the revised file in Deliverables.'
+                  : 'Next: wait for the artist to upload revised work, then review it in Deliverables.'}
+              </p>
+            )}
             {milestonesLoading && <div className="t-xs c-low" role="status">Loading milestones...</div>}
             {!milestonesLoading && milestonesError && <div className="t-xs c-danger" role="alert">Could not load milestones.</div>}
-            {!milestonesLoading && !milestonesError && milestones.length === 0 && <div className="t-xs c-low">No milestones yet.</div>}
+            {!milestonesLoading && !milestonesError && milestones.length === 0 && <div className="t-xs c-low">
+              {realCommission.status === 'ACCEPTED' ? 'Work stages appear after the artist starts work.' : 'No work stages are available yet.'}
+            </div>}
             {!milestonesLoading && !milestonesError && milestones.length > 0 && (
               <div className="workspace-milestone-list" style={{ position: 'relative', paddingLeft: 4 }}>
                 <div className="workspace-milestone-track" style={{ position: 'absolute', left: 13, top: 8, bottom: 8, width: 2, background: 'var(--ag-border-soft)' }} />
@@ -1406,9 +1517,8 @@ export function CommissionWorkspacePage() {
                         ? 'pending'
                         : 'in-progress';
                     const milestoneDate = milestone.approved_at ?? milestone.submitted_at ?? milestone.started_at;
-                    const isArtist = user.id === realCommission.artist_id;
-                    const isClient = user.id === realCommission.client_id;
                     const canStart = isArtist
+                      && realCommission.status === 'IN_PROGRESS'
                       && milestone.status === 'PENDING'
                       && milestones.slice(0, index).every((previous) => previous.status === 'SUBMITTED' || previous.status === 'APPROVED');
                     return (
@@ -1419,7 +1529,14 @@ export function CommissionWorkspacePage() {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div className="row-between gap-10">
                             <span className={`t-sm fw-700${milestone.status === 'PENDING' ? ' c-low' : ''}`}>{milestone.sort_order}. {milestone.name}</span>
-                            <span className="t-xs c-low workspace-milestone-status">{milestone.status.replace('_', ' ')}</span>
+                            <span className="t-xs c-low workspace-milestone-status">
+                              {milestone.status === 'SUBMITTED'
+                                ? 'Awaiting review · '
+                                : index === nextMilestoneIndex
+                                  ? 'Current stage · '
+                                  : milestone.status === 'APPROVED' ? 'Complete · ' : 'Upcoming · '}
+                              {milestone.status.replace('_', ' ')}
+                            </span>
                           </div>
                           {(milestone.note || milestoneDate) && <div className="t-xs c-low" style={{ marginTop: 3 }}>{milestone.note}{milestone.note && milestoneDate ? ' · ' : ''}{milestoneDate ? new Date(milestoneDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}</div>}
                           {canStart && (
@@ -1427,7 +1544,7 @@ export function CommissionWorkspacePage() {
                               {milestoneActionId === milestone.id ? 'Starting…' : 'Start'}
                             </button>
                           )}
-                          {isArtist && milestone.status === 'IN_PROGRESS' && (
+                          {isArtist && realCommission.status === 'IN_PROGRESS' && milestone.status === 'IN_PROGRESS' && (
                             <div style={{ marginTop: 8 }}>
                               <textarea
                                 className="textarea-field"
@@ -1474,7 +1591,7 @@ export function CommissionWorkspacePage() {
                 <div className="t-xs c-mid" style={{ marginTop: 4, lineHeight: 1.5 }}>{update.note}</div>
               </div>
             ))}
-            {!isClient && (
+            {isArtist && realCommission.status === 'IN_PROGRESS' && (
               <form onSubmit={(event) => void handlePostProgress(event)} style={{ marginTop: 10, paddingTop: 12, borderTop: '1px solid var(--ag-border-soft)' }}>
                 <label className="field-label" htmlFor="progress-percent">Progress</label>
                 <input id="progress-percent" className="input-field" type="number" min="0" max="100" step="1" value={progressPercent} onChange={(event) => setProgressPercent(event.target.value)} style={{ marginBottom: 10 }} />
@@ -1488,54 +1605,18 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
-        <section className="card workspace-escrow-card ag-liquid-glass-soft" aria-label="Simulated payment summary">
-          <div className="row-between workspace-escrow-heading">
-            <span className="section-title">Demo Payment Summary</span>
-            <span className={`badge ${escrowStatusClass}`}>{escrowStatus}</span>
-          </div>
-          <div className="workspace-escrow-total">
-            <span className="t-xs c-low">Agreed demo amount</span>
-            <span className="mono fw-700 workspace-escrow-amount">
-              {hasCommissionPaymentPrice(realCommission)
-                ? `${realCommission.currency} ${realCommission.amount!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                : 'Unavailable'}
-            </span>
-          </div>
-          <div className="workspace-escrow-breakdown">
-            <div>
-              <span className="t-xs c-low">Payment provider</span>
-              <span className="t-sm fw-700">Not configured</span>
-            </div>
-            <div>
-              <span className="t-xs c-low">Real money movement</span>
-              <span className="t-sm fw-700">None</span>
-            </div>
-          </div>
-          {matchingPaymentRefunded && commissionPayment.refunded_amount !== null && (
-            <div className="workspace-escrow-refund">
-              <span className="t-xs c-low">Demo refund recorded</span>
-              <span className="mono fw-700 workspace-escrow-amount">
-                {commissionPayment.currency} {commissionPayment.refunded_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-          )}
-          <p className="t-xs c-low workspace-escrow-note">
-            SIMULATED / DEMO ONLY. This app does not charge, receive, hold, release, or transfer real funds.
-          </p>
-        </section>
-
         {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'ACCEPTED') && (
           <section className="card" style={{ marginBottom: 16 }}>
             <div className="row-between" style={{ marginBottom: 10 }}>
               <span className="section-title">Commission Deliverables</span>
-              {!isClient && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
+              {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => deliverableFileRef.current?.click()} disabled={uploadingDeliverable}>
                   {uploadingDeliverable ? 'Processing…' : 'Upload Deliverable'}
                 </button>
               )}
             </div>
             <input ref={deliverableFileRef} type="file" accept="image/png,image/jpeg" style={{ display: 'none' }} onChange={(event) => void handleDeliverableSelected(event)} />
-            {!isClient && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
+            {isArtist && (realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED') && (
               <div style={{ marginBottom: 10 }}>
                 <label className="field-label" htmlFor="deliverable-title">Title</label>
                 <input id="deliverable-title" className="input-field" value={deliverableTitle} onChange={(event) => setDeliverableTitle(event.target.value)} placeholder="Final character render" style={{ marginBottom: 8 }} />
@@ -1555,6 +1636,11 @@ export function CommissionWorkspacePage() {
                 </div>
                 {deliverable.description && <div className="t-xs c-mid" style={{ marginTop: 4 }}>{deliverable.description}</div>}
                 {deliverable.submitted_at && <div className="t-xs c-low" style={{ marginTop: 5 }}>Submitted {new Date(deliverable.submitted_at).toLocaleString()}</div>}
+                {deliverable.status === 'FAILED' && (
+                  <div className="t-xs c-danger" style={{ marginTop: 8 }}>
+                    This upload failed. Upload a new file to retry; failed attempts do not block completion.
+                  </div>
+                )}
                 {isClient && deliverable.status === 'SUBMITTED' && (
                   <div className="row gap-10" style={{ marginTop: 10 }}>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setReviewDeliverableId(deliverable.id); setRevisionSectionVisible(true); }}>Request Revision</button>
@@ -1575,8 +1661,10 @@ export function CommissionWorkspacePage() {
               commissionId={realCommission.id}
               orderTitle={realCommission.title}
               deliverableId={reviewDeliverableId}
+              refreshKey={revisionRefreshKey}
+              onCommissionChanged={refreshCommissionStatus}
               readOnly={realCommission.status === 'COMPLETED'}
-              onRevisionCountChange={(count) => { if (count > 0) setRevisionSectionVisible(true); }}
+              onRevisionCountChange={handleRevisionCountChange}
             />
           </div>
         )}

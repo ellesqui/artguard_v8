@@ -14,6 +14,7 @@ import { useMockToast } from '../components/ui/MockToast';
 import { useArtworkFeed } from '../context/ArtworkFeedContext';
 import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import { listArtistProfiles } from '../lib/supabaseData';
 import { listMarketplaceArtistReviewSummaries, listMarketplaceArtistServiceSummaries } from '../lib/supabaseMarketplace';
 import { adaptSupabaseArtist, loadMockMarketplaceArtists, type MarketplaceArtist } from '../lib/marketplaceArtists';
@@ -241,6 +242,8 @@ export function MarketplacePage() {
   const [viewingApplicant, setViewingApplicant] = useState<OwnerCommissionPostApplication | null>(null);
   const [selectionAmount, setSelectionAmount] = useState('');
   const [selectionCurrency, setSelectionCurrency] = useState('');
+  const [selectionEstimatedHours, setSelectionEstimatedHours] = useState('');
+  const [selectionDeadline, setSelectionDeadline] = useState('');
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [selectingCommissionPostId, setSelectingCommissionPostId] = useState<string | null>(null);
   const [commentsPost, setCommentsPost] = useState<CommissionPost | null>(null);
@@ -298,6 +301,7 @@ export function MarketplacePage() {
     setViewingApplicant(null);
     setSelectingApplicant(null);
     setSelectionError(null);
+    setSelectionDeadline('');
     setApplicationMessage('');
     setApplicationActionError(null);
   }, [user?.id, user?.role]);
@@ -969,6 +973,8 @@ export function MarketplacePage() {
     setSelectingApplicant(application);
     setSelectionAmount('');
     setSelectionCurrency(applicantsPost.currency ?? '');
+    setSelectionDeadline('');
+    setSelectionEstimatedHours('');
     setSelectionError(null);
   };
   const refreshSelectionState = async (postId: string) => {
@@ -1006,6 +1012,11 @@ export function MarketplacePage() {
 
     const amount = Number(selectionAmount);
     const currency = selectionCurrency.trim();
+    const deadlineError = validateOptionalTargetDeadline(selectionDeadline);
+    if (deadlineError) {
+      setSelectionError(deadlineError);
+      return;
+    }
     if (!selectionAmount.trim() || !Number.isFinite(amount) || amount <= 0) {
       setSelectionError('Enter a final agreed amount greater than zero.');
       return;
@@ -1030,6 +1041,12 @@ export function MarketplacePage() {
       setSelectionError(`Final agreed amount cannot exceed ${applicantsPost.budget_max}.`);
       return;
     }
+    const estimatedHours = selectionEstimatedHours.trim() ? Number(selectionEstimatedHours) : null;
+    if (applicantsPost.owner_role === 'artist'
+      && (estimatedHours === null || !Number.isFinite(estimatedHours) || estimatedHours <= 0)) {
+      setSelectionError('Enter positive estimated working hours.');
+      return;
+    }
 
     const postId = applicantsPost.id;
     setSelectingCommissionPostId(postId);
@@ -1040,6 +1057,8 @@ export function MarketplacePage() {
         selectingApplicant.id,
         amount,
         currency,
+        selectionDeadline || null,
+        estimatedHours,
       );
       const selectedPost = { ...applicantsPost, status: 'SELECTED' as const };
       setCommissionPosts((current) => current.map((post) => post.id === postId ? selectedPost : post));
@@ -1064,6 +1083,8 @@ export function MarketplacePage() {
         : normalized.includes('SELECTION_APPLICATION_NOT_PENDING')
           || normalized.includes('SELECTION_APPLICATION_NOT_FOUND')
           ? 'This request is no longer pending. The latest applicant status has been loaded.'
+          : normalized.includes('TARGET_DEADLINE_IN_PAST')
+            ? 'Target deadline cannot be in the past.'
           : 'Could not select this applicant. Please try again.';
       setSelectionError(`${friendlyMessage}${refreshSucceeded ? '' : ' Could not refresh the latest post and applicant status.'}`);
     } finally {
@@ -2069,6 +2090,21 @@ export function MarketplacePage() {
                     disabled={selectingCommissionPostId !== null}
                     required
                   />
+                  {applicantsPost.owner_role === 'artist' && (
+                    <>
+                      <label className="field-label" htmlFor="commission-selection-hours">Estimated Working Hours</label>
+                      <input
+                        id="commission-selection-hours"
+                        className="input-field"
+                        type="number"
+                        min="0.01"
+                        step="0.25"
+                        value={selectionEstimatedHours}
+                        onChange={(event) => setSelectionEstimatedHours(event.target.value)}
+                        disabled={selectingCommissionPostId !== null}
+                      />
+                    </>
+                  )}
                   <label className="field-label" htmlFor="commission-selection-currency">Currency</label>
                   <input
                     id="commission-selection-currency"
@@ -2081,6 +2117,16 @@ export function MarketplacePage() {
                     onChange={(event) => setSelectionCurrency(event.target.value.toUpperCase())}
                     disabled={Boolean(applicantsPost.currency) || selectingCommissionPostId !== null}
                     required
+                  />
+                  <label className="field-label" htmlFor="commission-selection-deadline">Target Deadline (Optional)</label>
+                  <input
+                    id="commission-selection-deadline"
+                    className="input-field"
+                    type="date"
+                    min={getUtcDateInputValue()}
+                    value={selectionDeadline}
+                    onChange={(event) => setSelectionDeadline(event.target.value)}
+                    disabled={selectingCommissionPostId !== null}
                   />
                   {selectionError && <div className="field-error" role="alert">{selectionError}</div>}
                   <div className="t-sm c-mid commission-selection-warning">

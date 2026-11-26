@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { PublicProfile } from './supabaseData';
+import { dateOnlyEndOfDay } from './commissionDeadline';
 
 export type RevisionStatus = 'OPEN' | 'IN_PROGRESS' | 'SUBMITTED' | 'RESOLVED';
 export type CommissionStatus = 'REQUESTED' | 'ACCEPTED' | 'REJECTED' | 'IN_PROGRESS' | 'REVISION_REQUESTED' | 'COMPLETED' | 'CANCELLED';
@@ -26,22 +27,22 @@ export interface CommissionLink {
   amount: number | null;
   currency: string | null;
   turnaround_days_snapshot: number | null;
+  target_deadline: string | null;
+  client_budget: number | null;
+  client_budget_currency: string | null;
+  proposed_amount: number | null;
+  proposed_currency: string | null;
+  estimated_working_hours: number | null;
+  quote_status: 'NOT_REQUIRED' | 'AWAITING_ARTIST' | 'PENDING_CLIENT' | 'ACCEPTED';
+  quote_accepted_at: string | null;
   completed_at: string | null;
   completed_by: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export function getCommissionDueAt(commission: Pick<CommissionLink, 'started_at' | 'turnaround_days_snapshot'>): string | null {
-  const startedAt = commission.started_at ? Date.parse(commission.started_at) : Number.NaN;
-  const turnaroundDays = commission.turnaround_days_snapshot;
-  if (!Number.isFinite(startedAt) || !Number.isInteger(turnaroundDays) || turnaroundDays === null || turnaroundDays <= 0) {
-    return null;
-  }
-
-  // Turnaround days are elapsed 24-hour periods, matching existing duration calculations.
-  const dueAt = new Date(startedAt + turnaroundDays * 86_400_000);
-  return Number.isNaN(dueAt.getTime()) ? null : dueAt.toISOString();
+export function getCommissionDueAt(commission: Pick<CommissionLink, 'target_deadline'>): string | null {
+  return dateOnlyEndOfDay(commission.target_deadline)?.toISOString() ?? null;
 }
 
 export function isCommissionOverdue(commission: CommissionLink, now = new Date()): boolean {
@@ -62,6 +63,7 @@ export interface RevisionRequest {
   id: string;
   commission_id: string;
   deliverable_id: string | null;
+  response_deliverable_id: string | null;
   milestone_id: string | null;
   client_id: string;
   artist_id: string;
@@ -185,17 +187,49 @@ export async function createCommissionRequest(
   artistId: string,
   title: string,
   description: string,
+  targetDeadline: string | null = null,
+  clientBudget: number | null = null,
+  clientBudgetCurrency: string | null = null,
 ): Promise<{ commissionId: string; created: boolean }> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.rpc('create_commission_request', {
     p_artist_id: artistId,
     p_title: title,
     p_description: description,
+    p_target_deadline: targetDeadline,
+    p_client_budget: clientBudget,
+    p_client_budget_currency: clientBudgetCurrency,
   });
   if (error) throw error;
   const result = data as { commission_id?: string; created?: boolean };
   if (!result.commission_id) throw new Error('The commission request did not return an id.');
   return { commissionId: result.commission_id, created: result.created === true };
+}
+
+export async function proposeDirectCommissionQuote(
+  commissionId: string,
+  amount: number,
+  currency: string,
+  estimatedWorkingHours: number,
+): Promise<CommissionLink> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('propose_direct_commission_quote', {
+    p_commission_id: commissionId,
+    p_amount: amount,
+    p_currency: currency,
+    p_estimated_working_hours: estimatedWorkingHours,
+  });
+  if (error) throw error;
+  return data as CommissionLink;
+}
+
+export async function acceptDirectCommissionQuote(commissionId: string): Promise<CommissionLink> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.rpc('accept_direct_commission_quote', {
+    p_commission_id: commissionId,
+  });
+  if (error) throw error;
+  return data as CommissionLink;
 }
 
 export async function createServiceCommissionRequest(

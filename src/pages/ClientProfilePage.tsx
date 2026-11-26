@@ -20,6 +20,7 @@ import type { CommissionRequest } from '../data/mockData';
 import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, usernameFromEmail } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import './MarketplacePage.css';
 import './ClientProfilePage.css';
 import { listMyCommissions, type MyCommission } from '../lib/supabaseRevisions';
@@ -145,6 +146,7 @@ export function ClientProfilePage() {
   const [selectingProfileApplication, setSelectingProfileApplication] = useState<OwnerCommissionPostApplication | null>(null);
   const [profileSelectionAmount, setProfileSelectionAmount] = useState('');
   const [profileSelectionCurrency, setProfileSelectionCurrency] = useState('');
+  const [profileSelectionDeadline, setProfileSelectionDeadline] = useState('');
   const [profileSelectionError, setProfileSelectionError] = useState<string | null>(null);
   const [profileSelectionLoading, setProfileSelectionLoading] = useState(false);
   const [rejectingProfileApplicationId, setRejectingProfileApplicationId] = useState<string | null>(null);
@@ -468,6 +470,11 @@ export function ClientProfilePage() {
     if (!post || post.status !== 'OPEN' || !application || application.status !== 'PENDING' || profileSelectionLoading) return;
     const amount = Number(profileSelectionAmount);
     const currency = profileSelectionCurrency.trim().toUpperCase();
+    const deadlineError = validateOptionalTargetDeadline(profileSelectionDeadline);
+    if (deadlineError) {
+      setProfileSelectionError(deadlineError);
+      return;
+    }
     if (!profileSelectionAmount.trim() || !Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) / 100 !== amount) {
       setProfileSelectionError('Enter a final agreed amount greater than zero with no more than two decimal places.');
       return;
@@ -492,7 +499,7 @@ export function ClientProfilePage() {
     setProfileSelectionLoading(true);
     setProfileSelectionError(null);
     try {
-      await selectCommissionPostApplicant(post.id, application.id, amount, currency);
+      await selectCommissionPostApplicant(post.id, application.id, amount, currency, profileSelectionDeadline || null);
       const selected = { ...post, status: 'SELECTED' as const };
       setPublicPosts((current) => current.map((item) => item.id === post.id ? selected : item));
       setSelectedPublicPost(null);
@@ -502,8 +509,11 @@ export function ClientProfilePage() {
       })));
       setSelectingProfileApplication(null);
       showToast('Artist selected. Commission request created.');
-    } catch {
-      setProfileSelectionError('Could not accept this request. Refresh the post and try again.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toUpperCase() : '';
+      setProfileSelectionError(message.includes('TARGET_DEADLINE_IN_PAST')
+        ? 'Target deadline cannot be in the past.'
+        : 'Could not accept this request. Refresh the post and try again.');
     } finally {
       setProfileSelectionLoading(false);
     }
@@ -1232,6 +1242,7 @@ export function ClientProfilePage() {
                                   setSelectingProfileApplication(application);
                                   setProfileSelectionAmount('');
                                   setProfileSelectionCurrency(selectedPublicPost.currency ?? '');
+                                  setProfileSelectionDeadline('');
                                   setProfileSelectionError(null);
                                 }}
                               >
@@ -1261,6 +1272,16 @@ export function ClientProfilePage() {
                                 value={profileSelectionCurrency}
                                 onChange={(event) => setProfileSelectionCurrency(event.target.value.toUpperCase())}
                                 disabled={profileSelectionLoading || Boolean(selectedPublicPost.currency)}
+                              />
+                              <label className="field-label" htmlFor="profile-selection-deadline">Target Deadline (Optional)</label>
+                              <input
+                                id="profile-selection-deadline"
+                                className="input-field"
+                                type="date"
+                                min={getUtcDateInputValue()}
+                                value={profileSelectionDeadline}
+                                onChange={(event) => setProfileSelectionDeadline(event.target.value)}
+                                disabled={profileSelectionLoading}
                               />
                               {profileSelectionError && <div className="field-error" role="alert">{profileSelectionError}</div>}
                               <div className="commission-selection-actions">

@@ -87,6 +87,8 @@ export interface CommissionPostSelectionResult {
   service_id: string | null;
   amount: number | null;
   currency: string | null;
+  target_deadline: string | null;
+  estimated_working_hours: number | null;
   public_post_id: string;
   created_at: string;
   updated_at: string;
@@ -219,6 +221,8 @@ export async function selectCommissionPostApplicant(
   applicationId: string,
   amount: number,
   currency: string,
+  targetDeadline: string | null = null,
+  estimatedWorkingHours: number | null = null,
 ): Promise<CommissionPostSelectionResult> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase.rpc('select_commission_post_applicant', {
@@ -226,6 +230,8 @@ export async function selectCommissionPostApplicant(
     p_application_id: applicationId,
     p_amount: amount,
     p_currency: currency,
+    p_target_deadline: targetDeadline,
+    p_estimated_working_hours: estimatedWorkingHours,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;

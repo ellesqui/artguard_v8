@@ -9,7 +9,9 @@ import { BrandMark } from '../components/ui/BrandMark';
 import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { initialsFor } from '../lib/supabaseData';
-import { acceptCommissionRequest, getCommissionDueAt, listCommissionProgress, listMyCommissions, rejectCommissionRequest, type MyCommission } from '../lib/supabaseRevisions';
+import { acceptCommissionRequest, listCommissionProgress, listMyCommissions, proposeDirectCommissionQuote, rejectCommissionRequest, type MyCommission } from '../lib/supabaseRevisions';
+import { formatDateOnly } from '../lib/commissionDeadline';
+import { validateDirectCommissionQuote } from '../lib/commissionWorkflow';
 import { listMyPaidCommissionPayments, type CommissionPayment } from '../lib/supabasePayments';
 import { netCommissionPaymentAmount } from '../lib/commissionPaymentAccounting';
 import { ProgressBar } from '../components/ui/ProgressBar';
@@ -33,18 +35,6 @@ function relativeNotificationTime(value: string): string {
 }
 
 const ACTIVE_COMMISSION_STATUSES = new Set(['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED']);
-
-function commissionSnapshotLabel(commission: MyCommission): string {
-  const details = [commission.service_name_snapshot];
-  if (commission.amount !== null) {
-    const amount = commission.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    details.push(commission.currency ? `${commission.currency} ${amount}` : amount);
-  }
-  if (commission.turnaround_days_snapshot !== null) {
-    details.push(`${commission.turnaround_days_snapshot} day${commission.turnaround_days_snapshot === 1 ? '' : 's'}`);
-  }
-  return details.filter((detail): detail is string => Boolean(detail)).join(' · ');
-}
 
 function paidTotalsByCurrency(
   payments: Array<Pick<CommissionPayment, 'paid_at' | 'amount' | 'currency' | 'refunded_amount' | 'refunded_at'>>,
@@ -85,10 +75,30 @@ function paidPaymentHistoryPoints(
   return monthlyCounts.map((count, index) => `${index * 52} ${28 - (count / maxCount) * 20}`).join(' ');
 }
 
+function incomingCommissionTermsLabel(commission: MyCommission): string | null {
+  const details: string[] = [];
+  if (commission.service_name_snapshot) details.push(commission.service_name_snapshot);
+  if (commission.amount !== null && commission.currency) {
+    const label = commission.service_name_snapshot ? 'Service price' : 'Agreed price';
+    details.push(`${label}: ${commission.currency} ${commission.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  }
+  if (commission.turnaround_days_snapshot !== null) {
+    details.push(`Service turnaround estimate: ${commission.turnaround_days_snapshot} days`);
+  }
+  if (commission.estimated_working_hours !== null) {
+    details.push(`Estimated working hours: ${commission.estimated_working_hours}`);
+  }
+  return details.length > 0 ? details.join(' · ') : null;
+}
+
 function compactCommissionStatusLabel(commission: MyCommission): string {
   switch (commission.status) {
     case 'REQUESTED':
-      return 'Waiting for approval';
+      return commission.quote_status === 'PENDING_CLIENT'
+        ? 'Quote to review'
+        : commission.quote_status === 'AWAITING_ARTIST'
+          ? 'Waiting for quote'
+          : 'Waiting for approval';
     case 'ACCEPTED':
       return 'Accepted';
     case 'IN_PROGRESS':
@@ -114,6 +124,8 @@ export function HomeDashboardPage() {
   const [loadingCommissions, setLoadingCommissions] = useState(true);
   const [commissionLoadError, setCommissionLoadError] = useState<string | null>(null);
   const [commissionActionId, setCommissionActionId] = useState<string | null>(null);
+  const [commissionActionError, setCommissionActionError] = useState<string | null>(null);
+  const [quoteDrafts, setQuoteDrafts] = useState<Record<string, { amount: string; currency: string; hours: string }>>({});
   const [paidCommissionPayments, setPaidCommissionPayments] = useState<CommissionPayment[]>([]);
   const [loadingPaidCommissionPayments, setLoadingPaidCommissionPayments] = useState(true);
   const [paidCommissionPaymentsError, setPaidCommissionPaymentsError] = useState(false);
@@ -290,7 +302,7 @@ export function HomeDashboardPage() {
     void Promise.all(activeCommissions.map(async (commission) => {
       try {
         const updates = await listCommissionProgress(commission.id);
-        const latest = updates.reduce((max, update) => Math.max(max, Number(update.progress_percent) || 0), 0);
+        const latest = Number(updates[0]?.progress_percent) || 0;
         return [commission.id, latest, false] as const;
       } catch {
         return [commission.id, 0, true] as const;
@@ -343,11 +355,13 @@ export function HomeDashboardPage() {
   const handleAcceptCommission = async (commissionId: string) => {
     if (commissionActionId) return;
     setCommissionActionId(commissionId);
+    setCommissionActionError(null);
     try {
       await acceptCommissionRequest(commissionId);
       await refreshCommissions();
     } catch (error) {
       console.error('ArtGuard: unable to accept commission request', error);
+      setCommissionActionError('Could not accept this request. Refresh and try again.');
     } finally {
       setCommissionActionId(null);
     }
@@ -358,11 +372,44 @@ export function HomeDashboardPage() {
     const reason = window.prompt('Reason for rejecting this commission request:')?.trim() ?? '';
     if (!reason) return;
     setCommissionActionId(commissionId);
+    setCommissionActionError(null);
     try {
       await rejectCommissionRequest(commissionId, reason);
       await refreshCommissions();
     } catch (error) {
       console.error('ArtGuard: unable to reject commission request', error);
+      setCommissionActionError('Could not reject this request. Refresh and try again.');
+    } finally {
+      setCommissionActionId(null);
+    }
+  };
+
+  const handleProposeCommissionQuote = async (commission: MyCommission) => {
+    if (commissionActionId || commission.quote_status !== 'AWAITING_ARTIST') return;
+    const draft = quoteDrafts[commission.id] ?? { amount: '', currency: commission.client_budget_currency ?? 'PHP', hours: '' };
+    const validationError = validateDirectCommissionQuote(draft.amount, draft.currency.trim().toUpperCase(), draft.hours);
+    if (validationError) {
+      setCommissionActionError(validationError);
+      return;
+    }
+    setCommissionActionId(commission.id);
+    setCommissionActionError(null);
+    try {
+      await proposeDirectCommissionQuote(
+        commission.id,
+        Number(draft.amount),
+        draft.currency.trim().toUpperCase(),
+        Number(draft.hours),
+      );
+      await refreshCommissions();
+      setQuoteDrafts((current) => {
+        const next = { ...current };
+        delete next[commission.id];
+        return next;
+      });
+    } catch (error) {
+      console.error('ArtGuard: unable to propose direct commission quote', error);
+      setCommissionActionError('Could not send this quote. Refresh the request and try again.');
     } finally {
       setCommissionActionId(null);
     }
@@ -649,13 +696,16 @@ export function HomeDashboardPage() {
                     : commission.status === 'REQUESTED' || progressUnavailable
                       ? null
                       : Math.max(0, Math.min(100, Number.isFinite(rawProgress) ? rawProgress : 0));
-                  const dueAt = getCommissionDueAt(commission);
-                  const dueLabel = dueAt
-                    ? `Due ${new Date(dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                  const dueLabel = formatDateOnly(commission.target_deadline)
+                    ? `Target ${formatDateOnly(commission.target_deadline)}`
                     : 'No deadline set';
                   const progressLabel =
                     commission.status === 'REQUESTED'
-                      ? 'Awaiting approval'
+                      ? commission.quote_status === 'PENDING_CLIENT'
+                        ? 'Artist quote ready'
+                        : commission.quote_status === 'AWAITING_ARTIST'
+                          ? 'Waiting for artist quote'
+                          : 'Awaiting approval'
                       : progressUnavailable
                         ? 'Progress unavailable'
                         : commission.status === 'ACCEPTED'
@@ -698,7 +748,11 @@ export function HomeDashboardPage() {
                           {progressPercent !== null && <ProgressBar percent={progressPercent} color="var(--ag-success)" />}
                           <div className="home-commission-compact-due">
                             {commission.status === 'REQUESTED'
-                              ? 'Awaiting approval'
+                              ? commission.quote_status === 'PENDING_CLIENT'
+                                ? 'Quote to review'
+                                : commission.quote_status === 'AWAITING_ARTIST'
+                                  ? 'Waiting for artist quote'
+                                  : 'Awaiting approval'
                               : commission.status === 'ACCEPTED'
                                 ? 'Ready to start'
                                 : dueLabel}
@@ -715,6 +769,7 @@ export function HomeDashboardPage() {
                       <span className="section-title">Incoming Commission Requests</span>
                       <span className="t-xs c-low">{pendingRequestCount} pending</span>
                     </div>
+                    {commissionActionError && <div className="t-xs c-danger" role="alert" style={{ marginBottom: 10 }}>{commissionActionError}</div>}
                     {pendingCommissions.map((commission) => (
                       <article className="card home-incoming-request-card" key={`request-${commission.id}`} style={{ marginBottom: 10 }}>
                         <div className="row-between" style={{ marginBottom: 7 }}>
@@ -725,21 +780,103 @@ export function HomeDashboardPage() {
                           <span className="badge badge-warning">REQUESTED</span>
                         </div>
                         <div className="t-sm fw-600" style={{ marginBottom: 4 }}>{commission.title}</div>
-                        {commissionSnapshotLabel(commission) && (
-                          <div className="t-xs c-low" style={{ marginBottom: 4 }}>{commissionSnapshotLabel(commission)}</div>
+                        {commission.client_budget !== null && commission.client_budget_currency && (
+                          <div className="t-xs c-low" style={{ marginBottom: 4 }}>
+                            Client budget: {commission.client_budget_currency} {commission.client_budget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · guide only
+                          </div>
+                        )}
+                        {commission.quote_status === 'PENDING_CLIENT' && commission.proposed_amount !== null && commission.proposed_currency && (
+                          <div className="t-xs c-low" style={{ marginBottom: 4 }}>
+                            Proposed price: {commission.proposed_currency} {commission.proposed_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {commission.estimated_working_hours !== null && ` · ${commission.estimated_working_hours} estimated working hours`}
+                          </div>
+                        )}
+                        {incomingCommissionTermsLabel(commission) && (
+                          <div className="t-xs c-low" style={{ marginBottom: 4 }}>{incomingCommissionTermsLabel(commission)}</div>
                         )}
                         <div className="t-xs c-mid" style={{ lineHeight: 1.5 }}>{commission.description || 'No description provided.'}</div>
                         <div className="t-xs c-low" style={{ marginTop: 8 }}>
                           Requested {new Date(commission.requested_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
                         </div>
-                        <div className="row gap-10 home-request-actions" style={{ marginTop: 12 }}>
-                          <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleAcceptCommission(commission.id)}>
-                            {commissionActionId === commission.id ? 'Saving…' : 'Accept Commission'}
-                          </button>
-                          <button type="button" className="btn btn-ghost btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleRejectCommission(commission.id)}>
-                            Reject
-                          </button>
-                        </div>
+                        {commission.quote_status === 'AWAITING_ARTIST' ? (
+                          <>
+                            <div className="t-xs c-low" style={{ marginTop: 10 }}>
+                              Send your proposed price and a realistic working-hours estimate. The budget is only the Client&apos;s guide.
+                            </div>
+                            <label className="field-label" htmlFor={`quote-price-${commission.id}`} style={{ marginTop: 8 }}>Proposed Price</label>
+                            <div className="row gap-8">
+                              <input
+                                id={`quote-price-${commission.id}`}
+                                className="input-field"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={quoteDrafts[commission.id]?.amount ?? ''}
+                                onChange={(event) => setQuoteDrafts((current) => ({
+                                  ...current,
+                                  [commission.id]: {
+                                    ...(current[commission.id] ?? { amount: '', currency: commission.client_budget_currency ?? 'PHP', hours: '' }),
+                                    amount: event.target.value,
+                                  },
+                                }))}
+                                disabled={Boolean(commissionActionId)}
+                              />
+                              <input
+                                className="input-field"
+                                type="text"
+                                maxLength={3}
+                                aria-label="Proposed price currency"
+                                value={quoteDrafts[commission.id]?.currency ?? commission.client_budget_currency ?? 'PHP'}
+                                onChange={(event) => setQuoteDrafts((current) => ({
+                                  ...current,
+                                  [commission.id]: {
+                                    ...(current[commission.id] ?? { amount: '', currency: 'PHP', hours: '' }),
+                                    currency: event.target.value.toUpperCase(),
+                                  },
+                                }))}
+                                disabled={Boolean(commissionActionId)}
+                              />
+                            </div>
+                            <label className="field-label" htmlFor={`quote-hours-${commission.id}`} style={{ marginTop: 8 }}>Estimated Working Hours</label>
+                            <input
+                              id={`quote-hours-${commission.id}`}
+                              className="input-field"
+                              type="number"
+                              min="0.01"
+                              step="0.25"
+                              value={quoteDrafts[commission.id]?.hours ?? ''}
+                              onChange={(event) => setQuoteDrafts((current) => ({
+                                ...current,
+                                [commission.id]: {
+                                  ...(current[commission.id] ?? { amount: '', currency: commission.client_budget_currency ?? 'PHP', hours: '' }),
+                                  hours: event.target.value,
+                                },
+                              }))}
+                              disabled={Boolean(commissionActionId)}
+                            />
+                            <div className="row gap-10 home-request-actions" style={{ marginTop: 12 }}>
+                              <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleProposeCommissionQuote(commission)}>
+                                {commissionActionId === commission.id ? 'Sending…' : 'Send Quote'}
+                              </button>
+                              <button type="button" className="btn btn-ghost btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleRejectCommission(commission.id)}>
+                                Reject
+                              </button>
+                            </div>
+                          </>
+                        ) : commission.quote_status === 'PENDING_CLIENT' ? (
+                          <div className="t-xs c-warning" style={{ marginTop: 10 }}>
+                            Quote sent. Waiting for the Client to accept or cancel the request.
+                          </div>
+                        ) : (
+                          <div className="row gap-10 home-request-actions" style={{ marginTop: 12 }}>
+                            <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleAcceptCommission(commission.id)}>
+                              {commissionActionId === commission.id ? 'Saving…' : 'Accept Commission'}
+                            </button>
+                            <button type="button" className="btn btn-ghost btn-sm" style={{ flex: 1 }} disabled={Boolean(commissionActionId)} onClick={() => void handleRejectCommission(commission.id)}>
+                              Reject
+                            </button>
+                          </div>
+                        )}
                       </article>
                     ))}
                   </>

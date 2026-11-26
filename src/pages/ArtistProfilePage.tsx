@@ -15,6 +15,7 @@ import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, initialsFor, usernameFromEmail, type PublicProfile } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { isVerifiedArtistStatus } from '../types/auth';
+import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import { createPublicPortfolioSignedUrl, listPublicArtistArtworks, type PublicArtworkRecord } from '../lib/supabaseArtworks';
 import { listArtistReviews, type ArtistReview } from '../lib/supabaseReviews';
 import {
@@ -134,6 +135,8 @@ export function ArtistProfilePage() {
   const [selectingArtistPostApplication, setSelectingArtistPostApplication] = useState<OwnerCommissionPostApplication | null>(null);
   const [artistPostSelectionAmount, setArtistPostSelectionAmount] = useState('');
   const [artistPostSelectionCurrency, setArtistPostSelectionCurrency] = useState('');
+  const [artistPostSelectionHours, setArtistPostSelectionHours] = useState('');
+  const [artistPostSelectionDeadline, setArtistPostSelectionDeadline] = useState('');
   const [artistPostSelectionError, setArtistPostSelectionError] = useState<string | null>(null);
   const [artistPostSelectionSaving, setArtistPostSelectionSaving] = useState(false);
   const [requestingArtistPost, setRequestingArtistPost] = useState<CommissionPost | null>(null);
@@ -636,6 +639,11 @@ export function ArtistProfilePage() {
     if (!requestsForArtistPost || artistPostSelectionSaving) return;
     const amount = Number(artistPostSelectionAmount);
     const currency = artistPostSelectionCurrency.trim().toUpperCase();
+    const deadlineError = validateOptionalTargetDeadline(artistPostSelectionDeadline);
+    if (deadlineError) {
+      setArtistPostSelectionError(deadlineError);
+      return;
+    }
     if (!Number.isFinite(amount) || amount <= 0) {
       setArtistPostSelectionError('Enter an agreed amount greater than zero.');
       return;
@@ -644,10 +652,22 @@ export function ArtistProfilePage() {
       setArtistPostSelectionError('Currency must be a three-letter code.');
       return;
     }
+    const estimatedHours = Number(artistPostSelectionHours);
+    if (!artistPostSelectionHours.trim() || !Number.isFinite(estimatedHours) || estimatedHours <= 0) {
+      setArtistPostSelectionError('Enter positive estimated working hours.');
+      return;
+    }
     setArtistPostSelectionSaving(true);
     setArtistPostSelectionError(null);
     try {
-      await selectCommissionPostApplicant(requestsForArtistPost.id, application.id, amount, currency);
+      await selectCommissionPostApplicant(
+        requestsForArtistPost.id,
+        application.id,
+        amount,
+        currency,
+        artistPostSelectionDeadline || null,
+        estimatedHours,
+      );
       setCommissionPosts((current) => current.map((post) => post.id === requestsForArtistPost.id
         ? { ...post, status: 'SELECTED' }
         : post));
@@ -661,7 +681,12 @@ export function ArtistProfilePage() {
       setSelectingArtistPostApplication(null);
       showToast('Client selected. Commission request created.');
     } catch (error) {
-      setArtistPostSelectionError(error instanceof Error ? error.message : 'Could not accept this request.');
+      const message = error instanceof Error ? error.message.toUpperCase() : '';
+      setArtistPostSelectionError(message.includes('TARGET_DEADLINE_IN_PAST')
+        ? 'Target deadline cannot be in the past.'
+        : message.includes('SELECTION_ESTIMATED_HOURS_REQUIRED')
+          ? 'Enter positive estimated working hours.'
+          : 'Could not accept this request.');
     } finally {
       setArtistPostSelectionSaving(false);
     }
@@ -1208,6 +1233,8 @@ export function ArtistProfilePage() {
                               setSelectingArtistPostApplication(application);
                               setArtistPostSelectionAmount('');
                               setArtistPostSelectionCurrency(requestsForArtistPost.currency ?? '');
+                              setArtistPostSelectionHours('');
+                              setArtistPostSelectionDeadline('');
                               setArtistPostSelectionError(null);
                             }}
                           >
@@ -1234,6 +1261,26 @@ export function ArtistProfilePage() {
                             maxLength={3}
                             value={artistPostSelectionCurrency}
                             onChange={(event) => setArtistPostSelectionCurrency(event.target.value.toUpperCase())}
+                          />
+                          <label className="field-label" htmlFor="artist-post-selection-hours">Estimated Working Hours</label>
+                          <input
+                            id="artist-post-selection-hours"
+                            className="input-field"
+                            type="number"
+                            min="0.01"
+                            step="0.25"
+                            value={artistPostSelectionHours}
+                            onChange={(event) => setArtistPostSelectionHours(event.target.value)}
+                          />
+                          <label className="field-label" htmlFor="artist-post-selection-deadline">Target Deadline (Optional)</label>
+                          <input
+                            id="artist-post-selection-deadline"
+                            className="input-field"
+                            type="date"
+                            min={getUtcDateInputValue()}
+                            value={artistPostSelectionDeadline}
+                            onChange={(event) => setArtistPostSelectionDeadline(event.target.value)}
+                            disabled={artistPostSelectionSaving}
                           />
                           {artistPostSelectionError && <div className="field-error" role="alert">{artistPostSelectionError}</div>}
                           <button
