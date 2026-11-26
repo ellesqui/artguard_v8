@@ -1517,9 +1517,6 @@
     grid-area: sidebar;
   }
 
-  .workspace-next-action {
-    display: none;
-  }
 }
 
 @media (max-width: 999px) {
