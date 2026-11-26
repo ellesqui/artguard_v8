@@ -14,6 +14,7 @@
 }
 
 .workspace-sidebar-primary,
+.workspace-main-stack,
 .workspace-main-column,
 .workspace-sidebar-secondary {
   min-width: 0;
@@ -21,6 +22,7 @@
 
 .workspace-sidebar-primary,
 .workspace-sidebar-secondary,
+.workspace-main-stack,
 .workspace-main-column {
   display: flex;
   flex-direction: column;
@@ -1242,21 +1244,18 @@
   .workspace-layout {
     grid-template-columns: minmax(0, 1.75fr) minmax(300px, 0.95fr);
     grid-template-areas:
-      "action primary"
+      "main primary"
       "main secondary";
     gap: 20px 28px;
   }
 
-  .workspace-next-action {
-    grid-area: action;
+  .workspace-main-stack {
+    grid-area: main;
+    align-self: start;
   }
 
   .workspace-sidebar-primary {
     grid-area: primary;
-  }
-
-  .workspace-main-column {
-    grid-area: main;
   }
 
   .workspace-sidebar-secondary {
