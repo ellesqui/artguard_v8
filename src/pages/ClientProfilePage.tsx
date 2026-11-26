@@ -24,6 +24,8 @@ import './MarketplacePage.css';
 import './ClientProfilePage.css';
 import { listMyCommissions, type MyCommission } from '../lib/supabaseRevisions';
 import {
+  createCommissionPostApplication,
+  createCommissionPostComment,
   createCommissionPost,
   deleteCommissionPost,
   listCommissionPostComments,
@@ -98,9 +100,21 @@ export function ClientProfilePage() {
   const isRealClient = !clientId && isSupabaseConfigured && user?.role === 'client';
   const [viewedClient, setViewedClient] = useState<Awaited<ReturnType<typeof getPublicProfile>>>(null);
   const [viewedClientPosts, setViewedClientPosts] = useState<CommissionPost[]>([]);
+  const [viewedClientPostEngagement, setViewedClientPostEngagement] = useState<Record<string, CommissionPostEngagementSummary>>({});
+  const [viewedClientPostEngagementError, setViewedClientPostEngagementError] = useState(false);
   const [viewedClientLoading, setViewedClientLoading] = useState(Boolean(clientId));
   const [viewedClientError, setViewedClientError] = useState<string>();
   const [publicMessagePending, setPublicMessagePending] = useState(false);
+  const [commentsForViewedClientPost, setCommentsForViewedClientPost] = useState<CommissionPost | null>(null);
+  const [viewedClientPostComments, setViewedClientPostComments] = useState<CommissionPostComment[]>([]);
+  const [viewedClientPostCommentsLoading, setViewedClientPostCommentsLoading] = useState(false);
+  const [viewedClientPostCommentsError, setViewedClientPostCommentsError] = useState<string | null>(null);
+  const [viewedClientPostCommentDraft, setViewedClientPostCommentDraft] = useState('');
+  const [viewedClientPostCommentSaving, setViewedClientPostCommentSaving] = useState(false);
+  const [requestingViewedClientPost, setRequestingViewedClientPost] = useState<CommissionPost | null>(null);
+  const [viewedClientPostApplicationMessage, setViewedClientPostApplicationMessage] = useState('');
+  const [viewedClientPostApplicationError, setViewedClientPostApplicationError] = useState<string | null>(null);
+  const [viewedClientPostApplicationSaving, setViewedClientPostApplicationSaving] = useState(false);
 
   const [requests, setRequests] = useState<CommissionRequest[]>(CLIENT_COMMISSION_REQUESTS);
   const [composing, setComposing] = useState(false);
@@ -146,6 +160,8 @@ export function ClientProfilePage() {
     if (!clientId || !isSupabaseConfigured) {
       setViewedClient(null);
       setViewedClientPosts([]);
+      setViewedClientPostEngagement({});
+      setViewedClientPostEngagementError(false);
       setViewedClientLoading(false);
       setViewedClientError(undefined);
       return;
@@ -153,17 +169,33 @@ export function ClientProfilePage() {
     let active = true;
     setViewedClient(null);
     setViewedClientPosts([]);
+    setViewedClientPostEngagement({});
+    setViewedClientPostEngagementError(false);
     setViewedClientLoading(true);
     setViewedClientError(undefined);
     void Promise.all([getPublicProfile(clientId), listOpenCommissionPosts()])
-      .then(([profile, posts]) => {
+      .then(async ([profile, posts]) => {
         if (!active) return;
         if (!profile || profile.role !== 'client') {
           setViewedClientError('Client profile not found.');
           return;
         }
         setViewedClient(profile);
-        setViewedClientPosts(posts.filter((post) => post.owner_id === profile.id && post.owner_role === 'client'));
+        const profilePosts = posts.filter((post) => post.owner_id === profile.id && post.owner_role === 'client');
+        setViewedClientPosts(profilePosts);
+        try {
+          const summaries = await listCommissionPostEngagementSummaries(profilePosts.map((post) => post.id));
+          if (active) {
+            setViewedClientPostEngagement(Object.fromEntries(
+              summaries.map((summary) => [summary.commission_post_id, summary]),
+            ));
+            setViewedClientPostEngagementError(profilePosts.some((post) =>
+              !summaries.some((summary) => summary.commission_post_id === post.id),
+            ));
+          }
+        } catch {
+          if (active) setViewedClientPostEngagementError(true);
+        }
       })
       .catch((error: unknown) => {
         if (active) setViewedClientError(error instanceof Error ? error.message : 'Could not load this client profile.');
@@ -191,6 +223,74 @@ export function ClientProfilePage() {
       else showToast('Could not start the conversation. Please try again.');
     } finally {
       setPublicMessagePending(false);
+    }
+  };
+
+  const openViewedClientPostComments = async (post: CommissionPost) => {
+    setCommentsForViewedClientPost(post);
+    setViewedClientPostComments([]);
+    setViewedClientPostCommentsError(null);
+    setViewedClientPostCommentDraft('');
+    setViewedClientPostCommentsLoading(true);
+    try {
+      setViewedClientPostComments(await listCommissionPostComments(post.id));
+    } catch (error) {
+      setViewedClientPostCommentsError(error instanceof Error ? error.message : 'Could not load comments.');
+    } finally {
+      setViewedClientPostCommentsLoading(false);
+    }
+  };
+
+  const submitViewedClientPostComment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!commentsForViewedClientPost || !viewedClientPostCommentDraft.trim() || viewedClientPostCommentSaving) return;
+    setViewedClientPostCommentSaving(true);
+    setViewedClientPostCommentsError(null);
+    try {
+      const comment = await createCommissionPostComment(
+        commentsForViewedClientPost.id,
+        viewedClientPostCommentDraft.trim(),
+      );
+      setViewedClientPostComments((current) => [...current, comment]);
+      setViewedClientPostCommentDraft('');
+      setViewedClientPostEngagement((current) => {
+        const summary = current[commentsForViewedClientPost.id];
+        return summary ? {
+          ...current,
+          [commentsForViewedClientPost.id]: { ...summary, comment_count: summary.comment_count + 1 },
+        } : current;
+      });
+    } catch (error) {
+      setViewedClientPostCommentsError(error instanceof Error ? error.message : 'Could not add your comment.');
+    } finally {
+      setViewedClientPostCommentSaving(false);
+    }
+  };
+
+  const submitViewedClientPostApplication = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const post = requestingViewedClientPost;
+    const message = viewedClientPostApplicationMessage.trim();
+    if (!post || !user || user.role !== 'artist' || post.owner_role !== 'client'
+      || post.owner_id === user.id || post.status !== 'OPEN' || !message || viewedClientPostApplicationSaving) return;
+    setViewedClientPostApplicationSaving(true);
+    setViewedClientPostApplicationError(null);
+    try {
+      await createCommissionPostApplication(post.id, message);
+      setViewedClientPostEngagement((current) => {
+        const summary = current[post.id];
+        return summary ? {
+          ...current,
+          [post.id]: { ...summary, application_count: summary.application_count + 1 },
+        } : current;
+      });
+      setRequestingViewedClientPost(null);
+      setViewedClientPostApplicationMessage('');
+      showToast('Request sent to the Client');
+    } catch (error) {
+      setViewedClientPostApplicationError(error instanceof Error ? error.message : 'Could not send this request.');
+    } finally {
+      setViewedClientPostApplicationSaving(false);
     }
   };
 
@@ -515,6 +615,11 @@ export function ClientProfilePage() {
           />
           <div style={{ fontSize: 20, fontWeight: 700 }}>{viewedClient.name}</div>
           <div className="t-sm c-low" style={{ marginTop: 3 }}>@{viewedClient.username} · Client</div>
+          {viewedClient.id === user?.id ? (
+            <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={() => navigate('/profile/edit')}>
+              Edit Profile
+            </button>
+          ) : null}
         </div>
 
         {viewedClient.bio && (
@@ -539,25 +644,181 @@ export function ClientProfilePage() {
         )}
 
         <section aria-labelledby="client-public-requests-heading">
-          <div className="section-title" id="client-public-requests-heading" style={{ marginBottom: 10 }}>Open Public Requests</div>
+          <div className="section-title" id="client-public-requests-heading" style={{ marginBottom: 10 }}>Public Commission Posts</div>
+          {viewedClientPostEngagementError && (
+            <div className="t-xs c-low commission-engagement-unavailable" role="status">
+              Some post counts are temporarily unavailable.
+            </div>
+          )}
           {viewedClientPosts.length === 0 ? (
-            <div className="card t-sm c-mid">No open public requests.</div>
+            <div className="card t-sm c-mid">No public commission posts yet.</div>
           ) : (
-            <div style={{ display: 'grid', gap: 10 }}>
+            <div className="commission-post-feed">
               {viewedClientPosts.map((post) => (
-                <article className="card" key={post.id}>
-                  <h3 className="t-sm fw-700" style={{ margin: '0 0 6px' }}>{post.title}</h3>
-                  <p className="t-xs c-mid" style={{ margin: 0, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{post.description}</p>
-                  {(post.budget_min !== null || post.budget_max !== null) && (
-                    <div className="t-xs c-low" style={{ marginTop: 8 }}>
-                      Budget: {post.budget_min ?? '—'} – {post.budget_max ?? '—'}{post.currency ? ` ${post.currency}` : ''}
+                <article className="commission-post-card ag-liquid-glass-soft" key={post.id}>
+                  <div className="commission-post-card-header">
+                    <div className="commission-post-author">
+                      <ProfileAvatar
+                        className="avatar avatar-md commission-post-avatar"
+                        imageUrl={viewedClient.avatar_data_url}
+                        initials={viewedClientInitials}
+                      />
+                      <div className="commission-post-author-copy">
+                        <div className="t-sm fw-700 commission-post-author-name">{viewedClient.name}</div>
+                        <div className="t-xs c-low">@{viewedClient.username} · Client</div>
+                      </div>
                     </div>
-                  )}
+                    <span className="badge badge-success">OPEN</span>
+                  </div>
+                  <h2 className="commission-post-title">{post.title}</h2>
+                  <p className="commission-post-description">{post.description}</p>
+                  <div className="commission-post-budget">{formatBudgetRange(post) ?? 'Budget not specified'}</div>
+                  <div className="commission-post-engagement" aria-label="Post engagement">
+                    <button
+                      type="button"
+                      className="commission-post-comment-count"
+                      aria-label={`Comments for ${post.title}: ${viewedClientPostEngagement[post.id]?.comment_count ?? 'count unavailable'}`}
+                      onClick={() => void openViewedClientPostComments(post)}
+                    >
+                      <Icon name="chat" />{viewedClientPostEngagement[post.id]?.comment_count ?? '—'}
+                    </button>
+                    {user?.role === 'artist' && post.owner_id !== user.id && post.status === 'OPEN' && (
+                      <button
+                        type="button"
+                        className="commission-post-comment-count"
+                        aria-label={`Request ${post.title}`}
+                        title="Request this commission"
+                        onClick={() => {
+                          setRequestingViewedClientPost(post);
+                          setViewedClientPostApplicationMessage('');
+                          setViewedClientPostApplicationError(null);
+                        }}
+                      >
+                        <Icon name="send" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="commission-post-meta">
+                    <span className="t-xs c-low">Posted {formatPostedDate(post.created_at)}</span>
+                  </div>
                 </article>
               ))}
             </div>
           )}
         </section>
+        {commentsForViewedClientPost && (
+          <div
+            className="account-dialog-backdrop public-request-backdrop"
+            role="presentation"
+            onClick={() => { if (!viewedClientPostCommentSaving) setCommentsForViewedClientPost(null); }}
+          >
+            <section
+              className="account-dialog commission-comments-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="viewed-client-post-comments-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="row-between" style={{ marginBottom: 14, gap: 12 }}>
+                <h2 id="viewed-client-post-comments-title" className="t-sm fw-700">Comments</h2>
+                <button
+                  type="button"
+                  className="icon-btn commission-post-dialog-close"
+                  aria-label="Close comments"
+                  onClick={() => setCommentsForViewedClientPost(null)}
+                >
+                  <Icon name="x" />
+                </button>
+              </div>
+              {viewedClientPostCommentsLoading ? (
+                <div className="card t-sm c-mid" role="status">Loading comments...</div>
+              ) : viewedClientPostCommentsError ? (
+                <div className="field-error" role="alert">{viewedClientPostCommentsError}</div>
+              ) : viewedClientPostComments.length === 0 ? (
+                <div className="card t-sm c-mid commission-applicants-state">No comments yet.</div>
+              ) : (
+                <div className="commission-applicants-list">
+                  {viewedClientPostComments.map((comment) => (
+                    <article className="commission-applicant-card" key={comment.id}>
+                      <div className="t-sm fw-700">{comment.author_name}</div>
+                      <p className="commission-applicant-message">{comment.body}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {viewedClientPostCommentsError && <div className="field-error" role="alert">{viewedClientPostCommentsError}</div>}
+              {user && (
+                <form onSubmit={(event) => void submitViewedClientPostComment(event)} className="commission-comment-form">
+                  <label className="field-label" htmlFor="viewed-client-post-comment">Add a comment</label>
+                  <textarea
+                    id="viewed-client-post-comment"
+                    className="textarea-field"
+                    rows={3}
+                    value={viewedClientPostCommentDraft}
+                    onChange={(event) => setViewedClientPostCommentDraft(event.target.value)}
+                    maxLength={2000}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={viewedClientPostCommentSaving || !viewedClientPostCommentDraft.trim()}
+                  >
+                    {viewedClientPostCommentSaving ? 'Posting…' : 'Post Comment'}
+                  </button>
+                </form>
+              )}
+            </section>
+          </div>
+        )}
+        {requestingViewedClientPost && (
+          <div
+            className="account-dialog-backdrop public-request-backdrop"
+            role="presentation"
+            onClick={() => { if (!viewedClientPostApplicationSaving) setRequestingViewedClientPost(null); }}
+          >
+            <section
+              className="account-dialog public-request-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="viewed-client-post-request-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="row-between" style={{ marginBottom: 12 }}>
+                <h2 id="viewed-client-post-request-title" className="t-sm fw-700">Request Commission</h2>
+                <button
+                  type="button"
+                  className="icon-btn commission-post-dialog-close"
+                  aria-label="Close request"
+                  onClick={() => setRequestingViewedClientPost(null)}
+                >
+                  <Icon name="x" />
+                </button>
+              </div>
+              <div className="t-sm fw-700">{requestingViewedClientPost.title}</div>
+              <p className="commission-post-description">{requestingViewedClientPost.description}</p>
+              <form onSubmit={(event) => void submitViewedClientPostApplication(event)}>
+                <label className="field-label" htmlFor="viewed-client-post-application-message">Message</label>
+                <textarea
+                  id="viewed-client-post-application-message"
+                  className="textarea-field"
+                  rows={4}
+                  value={viewedClientPostApplicationMessage}
+                  onChange={(event) => setViewedClientPostApplicationMessage(event.target.value)}
+                  maxLength={2000}
+                  required
+                />
+                {viewedClientPostApplicationError && <div className="field-error" role="alert">{viewedClientPostApplicationError}</div>}
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-sm"
+                  disabled={viewedClientPostApplicationSaving || !viewedClientPostApplicationMessage.trim()}
+                >
+                  {viewedClientPostApplicationSaving ? 'Sending…' : 'Send Request'}
+                </button>
+              </form>
+            </section>
+          </div>
+        )}
         {toast}
       </ScreenShell>
     );
