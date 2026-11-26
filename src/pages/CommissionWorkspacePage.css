@@ -14,6 +14,7 @@
 }
 
 .workspace-sidebar-primary,
+.workspace-sidebar-stack,
 .workspace-main-stack,
 .workspace-main-column,
 .workspace-sidebar-secondary {
@@ -22,6 +23,7 @@
 
 .workspace-sidebar-primary,
 .workspace-sidebar-secondary,
+.workspace-sidebar-stack,
 .workspace-main-stack,
 .workspace-main-column {
   display: flex;
@@ -29,8 +31,13 @@
 }
 
 .workspace-sidebar-primary,
-.workspace-sidebar-secondary {
+.workspace-sidebar-secondary,
+.workspace-sidebar-stack {
   gap: 16px;
+}
+
+.workspace-sidebar-stack > .workspace-sidebar-primary > .workspace-payment-card {
+  margin-bottom: 0 !important;
 }
 
 .commission-workspace-header {
@@ -1243,9 +1250,7 @@
 @media (min-width: 1000px) {
   .workspace-layout {
     grid-template-columns: minmax(0, 1.75fr) minmax(300px, 0.95fr);
-    grid-template-areas:
-      "main primary"
-      "main secondary";
+    grid-template-areas: "main sidebar";
     gap: 20px 28px;
   }
 
@@ -1254,12 +1259,8 @@
     align-self: start;
   }
 
-  .workspace-sidebar-primary {
-    grid-area: primary;
-  }
-
-  .workspace-sidebar-secondary {
-    grid-area: secondary;
+  .workspace-sidebar-stack {
+    grid-area: sidebar;
   }
 
   .workspace-sidebar-secondary > .workspace-progress-card,
