@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
+import { useDialogAccessibility } from '../ui/useDialogAccessibility';
 import {
   canReviewCurrentFinalDelivery,
   canUploadFinalDelivery,
@@ -100,6 +101,10 @@ export function FinalDeliverySection({
   const [fileActionId, setFileActionId] = useState<string>();
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string>();
+  const previewDialogAccessibility = useDialogAccessibility({
+    isOpen: preview !== null,
+    onClose: () => setPreview(null),
+  });
 
   const refreshHistory = useCallback(async () => {
     if (!enabled || (!isArtist && !isClient)) {
@@ -269,6 +274,7 @@ export function FinalDeliverySection({
 
   const handlePreview = async (file: FinalDeliveryFile) => {
     if (previewLoadingId) return;
+    previewDialogAccessibility.rememberTrigger();
     if (preview) URL.revokeObjectURL(preview.url);
     setPreview(null);
     setPreviewLoadingId(file.file_id);
@@ -449,6 +455,8 @@ export function FinalDeliverySection({
             role="dialog"
             aria-modal="true"
             aria-labelledby="final-delivery-preview-title"
+            ref={previewDialogAccessibility.dialogRef}
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="workspace-final-delivery-preview-heading">

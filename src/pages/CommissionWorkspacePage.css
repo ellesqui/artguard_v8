@@ -832,6 +832,52 @@
   white-space: normal;
 }
 
+.workspace-status-freshness {
+  min-height: 16px;
+  color: var(--ag-text-low);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.workspace-status-freshness.is-error {
+  color: var(--ag-danger);
+}
+
+.workspace-quote-payment-note {
+  margin: 12px 0 0;
+  color: var(--ag-text-low);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-currency-code {
+  color: var(--ag-text-low);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.workspace-pre-work-status {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: var(--ag-r-md);
+  background: var(--ag-surface-2);
+}
+
+.workspace-pre-work-status strong {
+  color: var(--ag-text-hi);
+  font-size: 13px;
+}
+
+.workspace-pre-work-status p {
+  margin: 0;
+  color: var(--ag-text-mid);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .workspace-deliverable-description {
   display: -webkit-box;
   overflow: hidden;
@@ -1716,10 +1762,6 @@
     grid-area: sidebar;
   }
 
-  .workspace-next-action {
-    display: none;
-  }
-
 }
 
 @media (max-width: 999px) {
@@ -1735,20 +1777,20 @@
     display: contents;
   }
 
-  .workspace-next-action {
-    order: 1;
-  }
-
-  .workspace-main-column {
-    order: 2;
-  }
-
   .workspace-mobile-overview {
     display: block;
     align-self: stretch;
-    order: 3;
+    order: 1;
     width: 100%;
     margin-bottom: 18px;
+  }
+
+  .workspace-next-action {
+    order: 2;
+  }
+
+  .workspace-main-column {
+    order: 3;
   }
 
   .workspace-desktop-overview {
@@ -1844,15 +1886,16 @@
   }
 }
 
-@media (max-width: 360px) {
-  .workspace-header-heading {
-    flex-direction: column;
+@media (max-width: 767px) {
+  .commission-workspace-header .icon-btn {
+    width: 44px;
+    height: 44px;
   }
 }
 
-@media (min-width: 1000px) {
-  .workspace-next-action.workspace-next-action-payment-required {
-    display: grid;
+@media (max-width: 360px) {
+  .workspace-header-heading {
+    flex-direction: column;
   }
 }
 

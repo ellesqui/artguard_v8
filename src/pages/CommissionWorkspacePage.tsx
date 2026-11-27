@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ScreenShell } from '../components/ui/ScreenShell';
 import './CommissionWorkspacePage.css';
 import { IconButton } from '../components/ui/IconButton';
 import { OptionsMenu } from '../components/ui/OptionsMenu';
+import { useDialogAccessibility } from '../components/ui/useDialogAccessibility';
 import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
 import { ProgressBar } from '../components/ui/ProgressBar';
@@ -194,6 +194,9 @@ export function CommissionWorkspacePage() {
   const [realCounterparty, setRealCounterparty] = useState<PublicProfile | null>(null);
   const [realLoading, setRealLoading] = useState(true);
   const [realError, setRealError] = useState(false);
+  const [commissionStatusRefresh, setCommissionStatusRefresh] = useState<'idle' | 'refreshing' | 'updated' | 'error'>('idle');
+  const commissionStatusRefreshInFlight = useRef(false);
+  const nextActionTitleRef = useRef<HTMLHeadingElement | null>(null);
   const [commissionPayment, setCommissionPayment] = useState<CommissionPayment | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentStatusCommissionId, setPaymentStatusCommissionId] = useState<string | null>(null);
@@ -255,6 +258,42 @@ export function CommissionWorkspacePage() {
   const [reviewText, setReviewText] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitError, setReviewSubmitError] = useState<string | undefined>();
+  const completionDialogAccessibility = useDialogAccessibility({
+    isOpen: completionDialogOpen,
+    onClose: () => {
+      if (!completionLoading) setCompletionDialogOpen(false);
+    },
+    canClose: !completionLoading,
+    fallbackFocusRef: nextActionTitleRef,
+  });
+  const reviewDialogAccessibility = useDialogAccessibility({
+    isOpen: reviewDialogOpen,
+    onClose: () => closeReviewDialog(),
+    canClose: !reviewSubmitting,
+    fallbackFocusRef: nextActionTitleRef,
+  });
+  const cancellationDialogAccessibility = useDialogAccessibility({
+    isOpen: cancellationDialogOpen,
+    onClose: () => {
+      if (!cancellingCommission) setCancellationDialogOpen(false);
+    },
+    canClose: !cancellingCommission,
+    fallbackFocusRef: nextActionTitleRef,
+  });
+  const demoPaymentDialogAccessibility = useDialogAccessibility({
+    isOpen: demoPaymentConfirmOpen && demoPaymentDialogCommissionId === realCommission?.id,
+    onClose: () => closeDemoPaymentDialog(),
+    canClose: !paymentActionLoading,
+    fallbackFocusRef: nextActionTitleRef,
+  });
+  const refundDialogAccessibility = useDialogAccessibility({
+    isOpen: refundDialogOpen,
+    onClose: () => {
+      if (!refundSubmitting) setRefundDialogOpen(false);
+    },
+    canClose: !refundSubmitting,
+    fallbackFocusRef: nextActionTitleRef,
+  });
   const milestoneInitializationInFlight = useRef(new Set<string>());
   const handleRevisionCountChange = useCallback((count: number) => {
     if (count > 0) setRevisionSectionVisible(true);
@@ -268,20 +307,51 @@ export function CommissionWorkspacePage() {
   }, []);
   const currentCommissionId = realCommission?.id;
   const refreshCommissionStatus = useCallback(async () => {
-    if (!currentCommissionId) return;
+    if (!currentCommissionId || mockOrder || commissionStatusRefreshInFlight.current) return;
+    const requestedCommissionId = currentCommissionId;
+    commissionStatusRefreshInFlight.current = true;
+    setCommissionStatusRefresh('refreshing');
     try {
-      const refreshed = await getCommissionById(currentCommissionId);
+      const refreshed = await getCommissionById(requestedCommissionId);
+      if (activeOrderId.current !== requestedCommissionId) return;
       if (!refreshed) {
-        setRevisionRequestsError('The action succeeded, but commission status could not be refreshed.');
+        setCommissionStatusRefresh('error');
         return;
       }
-      setRealCommission(refreshed);
+      setRealCommission((current) => {
+        if (!current || current.id !== requestedCommissionId) return current;
+        const currentFields = Object.keys(current) as Array<keyof CommissionLink>;
+        const unchanged = currentFields.length === Object.keys(refreshed).length
+          && currentFields.every((key) => current[key] === refreshed[key]);
+        return unchanged ? current : refreshed;
+      });
+      setCommissionStatusRefresh('updated');
     } catch {
-      setRevisionRequestsError('The action succeeded, but commission status could not be refreshed.');
+      if (activeOrderId.current === requestedCommissionId) setCommissionStatusRefresh('error');
+    } finally {
+      commissionStatusRefreshInFlight.current = false;
+      if (activeOrderId.current !== requestedCommissionId) setCommissionStatusRefresh('idle');
     }
-  }, [currentCommissionId]);
+  }, [currentCommissionId, mockOrder]);
+  useEffect(() => {
+    if (mockOrder || !currentCommissionId) return;
+    const handleFocus = () => { void refreshCommissionStatus(); };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshCommissionStatus();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentCommissionId, mockOrder, refreshCommissionStatus]);
+  useEffect(() => {
+    if (commissionStatusRefresh !== 'updated') return;
+    const timeout = window.setTimeout(() => setCommissionStatusRefresh('idle'), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [commissionStatusRefresh]);
   const deliverableFileRef = useRef<HTMLInputElement>(null);
-  const artworkPreviewTriggerRef = useRef<HTMLButtonElement | null>(null);
   const isClientViewer = Boolean(realCommission && user && realCommission.client_id === user.id);
   const visibleDeliverables = useMemo(
     () => deliverables.filter((item) => !isClientViewer || ['SUBMITTED', 'APPROVED'].includes(item.status)),
@@ -294,6 +364,11 @@ export function CommissionWorkspacePage() {
   const activeArtworkIndex = imageDeliverables.findIndex((item) => item.id === activeArtworkId);
   const activeArtwork = activeArtworkIndex >= 0 ? imageDeliverables[activeArtworkIndex] : null;
   const activeArtworkUrl = activeArtwork ? deliverableUrls[activeArtwork.id] : undefined;
+  const artworkDialogAccessibility = useDialogAccessibility({
+    isOpen: Boolean(activeArtwork && activeArtworkUrl),
+    onClose: () => setActiveArtworkId(null),
+    fallbackFocusRef: nextActionTitleRef,
+  });
 
   useEffect(() => {
     if (activeArtworkId && activeArtworkIndex < 0) setActiveArtworkId(null);
@@ -304,9 +379,7 @@ export function CommissionWorkspacePage() {
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setActiveArtworkId(null);
-      } else if (event.key === 'ArrowRight' && activeArtworkIndex < imageDeliverables.length - 1) {
+      if (event.key === 'ArrowRight' && activeArtworkIndex < imageDeliverables.length - 1) {
         setActiveArtworkId(imageDeliverables[activeArtworkIndex + 1].id);
       } else if (event.key === 'ArrowLeft' && activeArtworkIndex > 0) {
         setActiveArtworkId(imageDeliverables[activeArtworkIndex - 1].id);
@@ -318,10 +391,6 @@ export function CommissionWorkspacePage() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [activeArtwork, activeArtworkIndex, activeArtworkUrl, imageDeliverables]);
-
-  useEffect(() => {
-    if (!activeArtworkId) artworkPreviewTriggerRef.current?.focus();
-  }, [activeArtworkId]);
 
   useEffect(() => {
     if (mockOrder || !orderId || !user) {
@@ -600,6 +669,7 @@ export function CommissionWorkspacePage() {
       void handleCancelCommission(reason);
       return;
     }
+    cancellationDialogAccessibility.rememberTrigger();
     setCancellationReason('');
     setCancellationDialogOpen(true);
   };
@@ -814,6 +884,7 @@ export function CommissionWorkspacePage() {
       || paymentActionInFlight.current
     ) return;
 
+    demoPaymentDialogAccessibility.rememberTrigger();
     setPaymentError(undefined);
     setDemoPaymentDialogStep('confirm');
     setDemoPaymentDialogCommissionId(realCommission.id);
@@ -1151,10 +1222,6 @@ export function CommissionWorkspacePage() {
           && !commissionPayment.provider_verified_at
         )
       );
-    const showClientPaymentRequired = isClient
-      && realCommission.status === 'ACCEPTED'
-      && requiresPaidPaymentBeforeStart
-      && !matchingPaymentIsPaid;
     const matchingDemoPaymentIsPaid = paymentStatusKnown
       && commissionPayment?.commission_id === realCommission.id
       && commissionPayment.payer_id === realCommission.client_id
@@ -1272,7 +1339,8 @@ export function CommissionWorkspacePage() {
     const showDeadlineWithoutFallback = realCommission.status === 'REQUESTED'
       || realCommission.status === 'CANCELLED'
       || realCommission.status === 'REJECTED';
-    const showDeadlineSummary = Boolean(formatDateOnly(realCommission.target_deadline))
+    const showDeadlineSummary = isQuoteAwaitingClient
+      || Boolean(formatDateOnly(realCommission.target_deadline))
       || ['ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'].includes(realCommission.status);
     const canCancelCommission = (
       isClient && ['REQUESTED', 'ACCEPTED', 'IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status)
@@ -1427,7 +1495,10 @@ export function CommissionWorkspacePage() {
             {showProposedQuote && (
               <div className="workspace-summary-metric">
                 <span>Proposed Price</span>
-                <strong>{formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}</strong>
+                <strong>
+                  {formatDemoAmount(realCommission.proposed_amount!, realCommission.proposed_currency!)}
+                  {' '}<span className="workspace-currency-code">{realCommission.proposed_currency}</span>
+                </strong>
               </div>
             )}
             {showEstimatedHours && (
@@ -1439,7 +1510,10 @@ export function CommissionWorkspacePage() {
             {showDeadlineSummary && (
               <div className="workspace-summary-metric">
                 <span>Target Deadline</span>
-                <strong>{formatDateOnly(realCommission.target_deadline) ?? (showDeadlineWithoutFallback ? null : 'No deadline set')}</strong>
+                <strong>
+                  {formatDateOnly(realCommission.target_deadline)
+                    ?? (showDeadlineWithoutFallback && !isQuoteAwaitingClient ? null : 'No deadline set')}
+                </strong>
                 {formatDateOnly(realCommission.target_deadline) && isActiveDeadlineStatus && (deadlineOverdue ? (
                   <small className="c-danger">
                     {overdueWholeDays > 0 ? `Overdue by ${overdueWholeDays} day${overdueWholeDays === 1 ? '' : 's'}` : 'Overdue by less than 1 day'}
@@ -1458,6 +1532,11 @@ export function CommissionWorkspacePage() {
               </div>
             )}
           </div>
+        )}
+        {isQuoteAwaitingClient && (
+          <p className="workspace-quote-payment-note">
+            Accepting the quote does not charge you. If accepted, simulated payment must be confirmed before work begins; no real money is transferred.
+          </p>
         )}
       </section>
     );
@@ -1511,12 +1590,22 @@ export function CommissionWorkspacePage() {
       >
         <div className="workspace-layout">
         <div className="workspace-main-stack">
-        <section
-          className={`workspace-next-action${showClientPaymentRequired ? ' workspace-next-action-payment-required' : ''}`}
-          aria-labelledby="workspace-next-action-title"
-        >
+        <section className="workspace-next-action" aria-labelledby="workspace-next-action-title">
           <div className="workspace-next-action-copy">
-            <h2 id="workspace-next-action-title">{nextStepTitle}</h2>
+            <div
+              className={`workspace-status-freshness is-${commissionStatusRefresh}`}
+              role={commissionStatusRefresh === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              {commissionStatusRefresh === 'refreshing'
+                ? 'Refreshing commission status…'
+                : commissionStatusRefresh === 'updated'
+                  ? 'Commission status updated.'
+                  : commissionStatusRefresh === 'error'
+                    ? 'Commission status could not be refreshed.'
+                    : ''}
+            </div>
+            <h2 id="workspace-next-action-title" ref={nextActionTitleRef} tabIndex={-1}>{nextStepTitle}</h2>
             <p>{nextStepDescription}</p>
             {realCommission.status === 'CANCELLED' && (
               <div className="workspace-terminal-reason">
@@ -1561,17 +1650,6 @@ export function CommissionWorkspacePage() {
             {realCommission.status === 'ACCEPTED' && isArtist && (
               <>
                 {isPublicPostCommission && <div className="t-xs c-low workspace-action-note">Payment is required before work can begin.</div>}
-                {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid && (
-                  <div className="t-xs c-low workspace-action-note">
-                    {paymentError
-                      ? 'Could not verify payment status.'
-                      : paymentLoading || !paymentStatusKnown
-                        ? 'Checking payment status before start…'
-                        : !paymentAvailable
-                          ? 'Commission price unavailable. Contact support.'
-                          : 'Payment required before starting this commission.'}
-                  </div>
-                )}
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -1590,7 +1668,15 @@ export function CommissionWorkspacePage() {
             {isClient && ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(realCommission.status) && (
               <>
                 {completionReady ? (
-                  <button type="button" className="btn btn-primary commission-complete-button" onClick={() => setCompletionDialogOpen(true)} disabled={completionLoading}>
+                  <button
+                    type="button"
+                    className="btn btn-primary commission-complete-button"
+                    onClick={(event) => {
+                      completionDialogAccessibility.rememberTrigger(event.currentTarget);
+                      setCompletionDialogOpen(true);
+                    }}
+                    disabled={completionLoading}
+                  >
                     Complete Commission
                   </button>
                 ) : (
@@ -1682,7 +1768,8 @@ export function CommissionWorkspacePage() {
                     type="button"
                     className="btn btn-secondary btn-sm"
                     style={{ marginTop: 10 }}
-                    onClick={() => {
+                    onClick={(event) => {
+                      reviewDialogAccessibility.rememberTrigger(event.currentTarget);
                       setReviewEditing(true);
                       setReviewRating(commissionReview.rating);
                       setReviewText(commissionReview.review_text);
@@ -1696,7 +1783,16 @@ export function CommissionWorkspacePage() {
               </div>
             )}
             {realCommission.status === 'COMPLETED' && isReviewEligibleClient && reviewCheckState === 'ready' && !commissionReview && (
-              <button type="button" className="btn btn-primary" onClick={() => setReviewDialogOpen(true)}>Leave a Review</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={(event) => {
+                  reviewDialogAccessibility.rememberTrigger(event.currentTarget);
+                  setReviewDialogOpen(true);
+                }}
+              >
+                Leave a Review
+              </button>
             )}
           </div>
         </section>
@@ -1714,7 +1810,22 @@ export function CommissionWorkspacePage() {
           )}
         </section>
 
-        {(realCommission.status === 'ACCEPTED' || realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'COMPLETED') && (
+        {realCommission.status === 'ACCEPTED' && (
+          <section className="workspace-pre-work-status" aria-label="Work progress" role="status">
+            <strong>Work not started</strong>
+            <p>
+              {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
+                ? 'Work begins after payment confirmation and the Artist starts the commission.'
+                : requiresPaidPaymentBeforeStart
+                  ? 'Payment is confirmed. Work stages and uploads appear after the Artist starts the commission.'
+                  : 'Work stages and uploads appear after the Artist starts the commission.'}
+            </p>
+          </section>
+        )}
+
+        {(realCommission.status === 'IN_PROGRESS'
+          || realCommission.status === 'REVISION_REQUESTED'
+          || realCommission.status === 'COMPLETED') && (
           <section id="workspace-milestones" className="card workspace-milestone-card ag-liquid-glass-soft" style={{ marginBottom: 16 }}>
             <div className="workspace-section-heading">
               <h2>Work Stages</h2>
@@ -1729,9 +1840,7 @@ export function CommissionWorkspacePage() {
             )}
             {milestonesLoading && <div className="t-xs c-low" role="status">Loading milestones...</div>}
             {!milestonesLoading && milestonesError && <div className="t-xs c-danger" role="alert">Could not load milestones.</div>}
-            {!milestonesLoading && !milestonesError && milestones.length === 0 && <div className="t-xs c-low">
-              {realCommission.status === 'ACCEPTED' ? 'Work stages appear after the artist starts work.' : 'No work stages are available yet.'}
-            </div>}
+            {!milestonesLoading && !milestonesError && milestones.length === 0 && <div className="t-xs c-low">No work stages are available yet.</div>}
             {!milestonesLoading && !milestonesError && milestones.length > 0 && (
               <div className="workspace-milestone-list" style={{ position: 'relative', paddingLeft: 4 }}>
                 <div className="workspace-milestone-track" style={{ position: 'absolute', left: 13, top: 8, bottom: 8, width: 2, background: 'var(--ag-border-soft)' }} />
@@ -1808,7 +1917,9 @@ export function CommissionWorkspacePage() {
           </section>
         )}
 
-        {(realCommission.status === 'IN_PROGRESS' || realCommission.status === 'REVISION_REQUESTED' || realCommission.status === 'ACCEPTED' || realCommission.status === 'COMPLETED') && (
+        {(realCommission.status === 'IN_PROGRESS'
+          || realCommission.status === 'REVISION_REQUESTED'
+          || realCommission.status === 'COMPLETED') && (
           <section id="commission-deliverables" className="card workspace-deliverables" style={{ marginBottom: 16 }}>
             <div className="row-between workspace-section-heading">
               <div>
@@ -1849,7 +1960,7 @@ export function CommissionWorkspacePage() {
                             type="button"
                             className="workspace-deliverable-preview-button"
                             onClick={(event) => {
-                              artworkPreviewTriggerRef.current = event.currentTarget;
+                              artworkDialogAccessibility.rememberTrigger(event.currentTarget);
                               setActiveArtworkId(deliverable.id);
                             }}
                             aria-label={`Open ${deliverable.title} full preview`}
@@ -1984,7 +2095,11 @@ export function CommissionWorkspacePage() {
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
-                    onClick={() => { setRefundError(undefined); setRefundDialogOpen(true); }}
+                    onClick={(event) => {
+                      refundDialogAccessibility.rememberTrigger(event.currentTarget);
+                      setRefundError(undefined);
+                      setRefundDialogOpen(true);
+                    }}
                     disabled={refundSubmitting || paymentActionLoading}
                   >
                     Refund payment
@@ -2071,6 +2186,8 @@ export function CommissionWorkspacePage() {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="workspace-artwork-viewer-title"
+                ref={artworkDialogAccessibility.dialogRef}
+                tabIndex={-1}
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="workspace-artwork-viewer-header">
@@ -2112,7 +2229,15 @@ export function CommissionWorkspacePage() {
           )}
         {completionDialogOpen && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !completionLoading && setCompletionDialogOpen(false)}>
-            <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="complete-commission-title" onClick={(event) => event.stopPropagation()}>
+            <section
+              className="account-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="complete-commission-title"
+              ref={completionDialogAccessibility.dialogRef}
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="account-dialog-icon"><Icon name="check-circle" /></div>
               <h2 id="complete-commission-title">Complete Commission?</h2>
               <p>This will close the commission. You will still be able to view its history.</p>
@@ -2127,7 +2252,15 @@ export function CommissionWorkspacePage() {
         )}
         {reviewDialogOpen && isReviewEligibleClient && realCommission.status === 'COMPLETED' && reviewCheckState === 'ready' && (reviewEditing ? commissionReview !== null : !commissionReview) && (
           <div className="account-dialog-backdrop" role="presentation" onClick={closeReviewDialog}>
-            <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="artist-review-title" onClick={(event) => event.stopPropagation()}>
+            <section
+              className="account-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="artist-review-title"
+              ref={reviewDialogAccessibility.dialogRef}
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="account-dialog-icon"><Icon name="star" /></div>
               <h2 id="artist-review-title">{reviewEditing ? 'Edit Review' : 'Leave a Review'}</h2>
               <label className="field-label" id="artist-review-rating-label">Rating</label>
@@ -2175,7 +2308,15 @@ export function CommissionWorkspacePage() {
         )}
         {cancellationDialogOpen && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !cancellingCommission && setCancellationDialogOpen(false)}>
-            <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-commission-title" onClick={(event) => event.stopPropagation()}>
+            <section
+              className="account-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cancel-commission-title"
+              ref={cancellationDialogAccessibility.dialogRef}
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="account-dialog-icon">
                 <Icon name="alert" />
               </div>
@@ -2202,7 +2343,15 @@ export function CommissionWorkspacePage() {
         )}
         {showDemoPaymentDialog && (
           <div className="account-dialog-backdrop" role="presentation" onClick={closeDemoPaymentDialog}>
-            <section className="account-dialog workspace-demo-payment-dialog" role="dialog" aria-modal="true" aria-labelledby="demo-payment-title" onClick={(event) => event.stopPropagation()}>
+            <section
+              className="account-dialog workspace-demo-payment-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="demo-payment-title"
+              ref={demoPaymentDialogAccessibility.dialogRef}
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
               {demoPaymentDialogStep === 'receipt' && demoPaymentReceipt ? (
                 <>
                   <div className="workspace-demo-payment-result-icon" aria-hidden="true">
@@ -2296,7 +2445,15 @@ export function CommissionWorkspacePage() {
         )}
         {refundDialogOpen && canRefundPayment && commissionPayment && (
           <div className="account-dialog-backdrop" role="presentation" onClick={() => !refundSubmitting && setRefundDialogOpen(false)}>
-            <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="refund-payment-title" onClick={(event) => event.stopPropagation()}>
+            <section
+              className="account-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="refund-payment-title"
+              ref={refundDialogAccessibility.dialogRef}
+              tabIndex={-1}
+              onClick={(event) => event.stopPropagation()}
+            >
               <div className="account-dialog-icon"><Icon name="alert" /></div>
               <h2 id="refund-payment-title">Refund this payment?</h2>
               <p>This will simulate a full refund of the original payment amount.</p>

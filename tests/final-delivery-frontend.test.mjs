@@ -113,11 +113,11 @@ test('frontend service uses the migration RPCs and protected Edge Function actio
   assert.match(component, /multiple/);
 });
 
-test('mobile workspace orders Next Action, main work, Final Delivery, overview, progress, and history', async () => {
+test('workspace keeps one primary action visible and places mobile quote context before it', async () => {
   const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
   const css = await readFile(new URL('../src/pages/CommissionWorkspacePage.css', import.meta.url), 'utf8');
-  const orderedMarkup = [
-    page.indexOf('className={`workspace-next-action'),
+  const requiredMarkup = [
+    page.indexOf('<section className="workspace-next-action"'),
     page.indexOf('<main className="workspace-main-column">'),
     page.indexOf('<h2 id="workspace-brief-title">'),
     page.indexOf('<h2>Work Stages</h2>'),
@@ -127,19 +127,48 @@ test('mobile workspace orders Next Action, main work, Final Delivery, overview, 
     page.indexOf('<h2>Progress Updates</h2>'),
     page.indexOf('<summary>Transaction History'),
   ];
-  assert.ok(orderedMarkup.every((index) => index >= 0));
-  assert.deepEqual(orderedMarkup, [...orderedMarkup].sort((a, b) => a - b));
+  assert.ok(requiredMarkup.every((index) => index >= 0));
 
   const mobileRules = css.match(/@media \(max-width: 999px\) \{([\s\S]*?)\n\}/)?.[1];
   assert.ok(mobileRules);
-  assert.match(mobileRules, /\.workspace-next-action\s*\{\s*order:\s*1/);
-  assert.match(mobileRules, /\.workspace-main-column\s*\{\s*order:\s*2/);
-  assert.match(mobileRules, /\.workspace-mobile-overview\s*\{[\s\S]*?order:\s*3/);
-
-  assert.match(page, /showClientPaymentRequired = isClient[\s\S]*requiresPaidPaymentBeforeStart[\s\S]*!matchingPaymentIsPaid/);
-  assert.match(css, /@media \(min-width: 1000px\) \{[\s\S]*?\.workspace-next-action\.workspace-next-action-payment-required\s*\{\s*display:\s*grid/);
+  assert.match(mobileRules, /\.workspace-mobile-overview\s*\{[\s\S]*?order:\s*1/);
+  assert.match(mobileRules, /\.workspace-next-action\s*\{\s*order:\s*2/);
+  assert.match(mobileRules, /\.workspace-main-column\s*\{\s*order:\s*3/);
+  assert.doesNotMatch(css, /\.workspace-next-action\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(css, /workspace-next-action-payment-required/);
+  assert.match(page, /isClient && isQuoteAwaitingClient[\s\S]*?Accept Quote/);
+  assert.match(page, /realCommission\.status === 'ACCEPTED' && isArtist[\s\S]*?Start Commission/);
+  assert.match(page, /workspace-quote-payment-note[\s\S]*?no real money is transferred/i);
+  assert.match(page, /workspace-currency-code[\s\S]*?realCommission\.proposed_currency/);
   const compactPaymentRules = css.slice(css.lastIndexOf('@media (max-width: 999px) {'));
   assert.match(compactPaymentRules, /\.workspace-commission-payment-card\s*\{\s*display:\s*flex/);
+});
+
+test('accepted pre-work state uses a compact notice and retains active work and Final Delivery gates', async () => {
+  const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
+  assert.match(page, /realCommission\.status === 'ACCEPTED' && \(\s*<section className="workspace-pre-work-status"/);
+  assert.match(page, /Work begins after payment confirmation and the Artist starts the commission/);
+  assert.match(page, /realCommission\.status === 'IN_PROGRESS'\s*\|\|\s*realCommission\.status === 'REVISION_REQUESTED'/);
+  assert.match(page, /finalDeliveryRequired && \['IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'\]/);
+});
+
+test('status freshness and modal keyboard handling use safe focus and dismiss rules', async () => {
+  const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
+  const hook = await readFile(new URL('../src/components/ui/useDialogAccessibility.ts', import.meta.url), 'utf8');
+  const finalDelivery = await readFile(new URL('../src/components/commission/FinalDeliverySection.tsx', import.meta.url), 'utf8');
+  const reportDialog = await readFile(new URL('../src/components/ReportSubmissionDialog.tsx', import.meta.url), 'utf8');
+
+  assert.match(page, /addEventListener\('focus', handleFocus\)/);
+  assert.match(page, /addEventListener\('visibilitychange', handleVisibilityChange\)/);
+  assert.match(page, /removeEventListener\('focus', handleFocus\)/);
+  assert.match(page, /removeEventListener\('visibilitychange', handleVisibilityChange\)/);
+  assert.match(page, /commissionStatusRefreshInFlight/);
+  assert.match(hook, /event\.key === 'Escape'/);
+  assert.match(hook, /event\.key !== 'Tab'/);
+  assert.match(hook, /previousFocus\.focus\(\)/);
+  assert.match(page, /canClose: !paymentActionLoading/);
+  assert.match(finalDelivery, /useDialogAccessibility/);
+  assert.match(reportDialog, /canClose: !submitting/);
 });
 
 test('legacy UI remains hidden and Final Delivery is only mounted behind the feature flag', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { IconButton } from './IconButton';
 
@@ -28,6 +28,9 @@ interface OptionsMenuProps {
 export function OptionsMenu({ items, ariaLabel = 'More options', align = 'right', triggerStyle }: OptionsMenuProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const focusTrigger = useCallback(() => {
+    wrapRef.current?.querySelector<HTMLButtonElement>('.icon-btn')?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -38,7 +41,10 @@ export function OptionsMenu({ items, ariaLabel = 'More options', align = 'right'
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        setOpen(false);
+        focusTrigger();
+      }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
@@ -47,13 +53,19 @@ export function OptionsMenu({ items, ariaLabel = 'More options', align = 'right'
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open]);
+  }, [focusTrigger, open]);
 
   if (items.length === 0) return null;
 
   return (
     <div className="options-menu-wrap" ref={wrapRef}>
-      <IconButton icon="dots" onClick={() => setOpen((v) => !v)} ariaLabel={ariaLabel} style={triggerStyle} />
+      <IconButton
+        icon="dots"
+        onClick={() => setOpen((v) => !v)}
+        ariaLabel={ariaLabel}
+        ariaExpanded={open}
+        style={triggerStyle}
+      />
       {open && (
         <div className={`card options-menu-dropdown${align === 'left' ? ' options-menu-dropdown-left' : ''}`}>
           {items.map((item) => (
@@ -63,6 +75,7 @@ export function OptionsMenu({ items, ariaLabel = 'More options', align = 'right'
               className={`tap-card options-menu-item${item.danger ? ' c-danger' : ''}`}
               onClick={() => {
                 setOpen(false);
+                focusTrigger();
                 item.onClick();
               }}
             >

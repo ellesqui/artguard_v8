@@ -4,6 +4,7 @@ import { isSupabaseConfigured } from '../lib/supabase';
 import { submitContentReport } from '../lib/supabaseData';
 import type { ContentReportCategory, ContentReportTargetType } from '../lib/supabaseData';
 import { useAuth } from '../context/AuthContext';
+import { useDialogAccessibility } from './ui/useDialogAccessibility';
 import './ReportSubmissionDialog.css';
 
 export interface ReportSubmissionTarget {
@@ -37,6 +38,13 @@ export function ReportSubmissionDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmed, setConfirmed] = useState(false);
+  const dialogAccessibility = useDialogAccessibility({
+    isOpen: target !== null,
+    onClose: () => {
+      if (!submitting) onClose();
+    },
+    canClose: !submitting,
+  });
 
   useEffect(() => {
     setCategory('');
@@ -79,19 +87,23 @@ export function ReportSubmissionDialog({
     }
   };
 
+  const closeIfSafe = () => {
+    if (!submitting) onClose();
+  };
+
   return (
     <div
       className="report-dialog-backdrop"
       role="presentation"
-      onClick={() => {
-        if (!submitting) onClose();
-      }}
+      onClick={closeIfSafe}
     >
       <section
         className="report-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-dialog-title"
+        ref={dialogAccessibility.dialogRef}
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         {confirmed ? (
@@ -103,13 +115,13 @@ export function ReportSubmissionDialog({
                 ? 'Your report was submitted for moderation. You can track its status in My Reports.'
                 : 'Demo preview only. No report was sent or saved.'}
             </p>
-            <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>Done</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={closeIfSafe}>Done</button>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
             <div className="row-between gap-10">
               <h2 id="report-dialog-title">Report {target.label}</h2>
-              <button type="button" className="link-sm" onClick={onClose} disabled={submitting}>Cancel</button>
+              <button type="button" className="link-sm" onClick={closeIfSafe} disabled={submitting}>Cancel</button>
             </div>
             <p className="t-xs c-low">
               Reports are private. Choose the closest category and include only details relevant to your concern.
@@ -150,7 +162,7 @@ export function ReportSubmissionDialog({
               </div>
             )}
             <div className="report-dialog-actions">
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={submitting}>Cancel</button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={closeIfSafe} disabled={submitting}>Cancel</button>
               <button type="submit" className="btn btn-primary btn-sm" disabled={submitting || !category}>
                 {submitting ? 'Submitting…' : 'Confirm report'}
               </button>
