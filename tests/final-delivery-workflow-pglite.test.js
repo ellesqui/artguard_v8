@@ -6,11 +6,10 @@ import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const migration = await readFile(resolve(root, 'supabase/commission-final-delivery.sql'), 'utf8');
-const migrationEnd = migration.indexOf('-- Current supported creation paths opt in.');
-const completionStart = migration.indexOf('create or replace function public.complete_commission(');
-const completionEnd = migration.indexOf('$$;', completionStart) + 3;
-assert.ok(migrationEnd > 0 && completionStart > migrationEnd && completionEnd > completionStart);
+const foundationMigration = await readFile(
+  resolve(root, 'supabase/commission-final-delivery-foundation.sql'),
+  'utf8',
+);
 
 const testIds = {
   artist: '10000000-0000-4000-8000-000000000001',
@@ -105,7 +104,7 @@ insert into public.profiles (id, role, name) values
 
 const database = new PGlite();
 await database.exec(fixture);
-await database.exec(`${migration.slice(0, migrationEnd)}\n${migration.slice(completionStart, completionEnd)}\ncommit;`);
+await database.exec(foundationMigration);
 
 async function setIdentity(role, userId) {
   await database.exec(`set role ${role}`);
@@ -122,6 +121,23 @@ async function resetIdentity() {
     `select set_config('request.jwt.claim.sub', '', false),
             set_config('request.jwt.claim.role', '', false)`,
   );
+}
+
+async function withReservationWindow(deliveryId, remaining, role, callback) {
+  await database.exec('begin');
+  try {
+    await database.query(
+      `update public.commission_final_deliveries
+       set expires_at = now() + $2::interval
+       where id = $1`,
+      [deliveryId, remaining],
+    );
+    await setIdentity(role, testIds.artist);
+    return await callback();
+  } finally {
+    await database.exec('rollback');
+    await resetIdentity();
+  }
 }
 
 async function createCommission({
@@ -248,9 +264,41 @@ test('Final Render approval, participant role checks, and protected Storage read
     await resetIdentity();
   }
 
+  await setIdentity('authenticated', testIds.artist);
+  try {
+    await assert.rejects(
+      database.query('select public.is_final_render_approved($1)', [commissionId]),
+      /permission denied/i,
+    );
+  } finally {
+    await resetIdentity();
+  }
+
   const batch = await beginBatch(commissionId);
   const fileId = batch.files[0].file_id;
   const path = await reserveObject(batch.delivery_id, fileId);
+
+  await setIdentity('authenticated', testIds.artist);
+  try {
+    const { rows } = await database.query(
+      'select public.can_upload_final_delivery_object($1) as allowed',
+      [path],
+    );
+    assert.equal(rows[0].allowed, true, 'unexpired reservations allow upload authorization');
+  } finally {
+    await resetIdentity();
+  }
+
+  await setIdentity('service_role', testIds.artist);
+  try {
+    const { rows } = await database.query(
+      'select * from public.get_final_delivery_upload_targets($1, $2)',
+      [batch.delivery_id, testIds.artist],
+    );
+    assert.equal(rows.length, 1, 'unexpired reservations return upload targets');
+  } finally {
+    await resetIdentity();
+  }
 
   await setIdentity('authenticated', testIds.client);
   try {
@@ -323,6 +371,54 @@ test('Final Render approval, participant role checks, and protected Storage read
   } finally {
     await resetIdentity();
   }
+});
+
+test('signed upload cutoff rejects the boundary while verification and finalization use reservation expiry', async () => {
+  const commissionId = await createCommission();
+  const batch = await beginBatch(commissionId);
+  const fileId = batch.files[0].file_id;
+  const path = await reserveObject(batch.delivery_id, fileId);
+
+  for (const remaining of ['3 hours', '2 hours 59 minutes']) {
+    await withReservationWindow(batch.delivery_id, remaining, 'authenticated', async () => {
+      const { rows } = await database.query(
+        'select public.can_upload_final_delivery_object($1) as allowed',
+        [path],
+      );
+      assert.equal(rows[0].allowed, false, `${remaining} remaining must block new Storage authorization`);
+    });
+
+    await withReservationWindow(batch.delivery_id, remaining, 'service_role', async () => {
+      await assert.rejects(
+        database.query(
+          'select * from public.get_final_delivery_upload_targets($1, $2)',
+          [batch.delivery_id, testIds.artist],
+        ),
+        /FINAL_DELIVERY_UPLOAD_CUTOFF: Signed upload URLs require more than three hours/i,
+      );
+    });
+  }
+
+  await withReservationWindow(batch.delivery_id, '2 hours', 'service_role', async () => {
+    const { rows } = await database.query(
+      'select * from public.get_final_delivery_verification_targets($1, $2)',
+      [batch.delivery_id, testIds.artist],
+    );
+    assert.equal(rows.length, 1, 'unexpired reservations remain available for verification');
+  });
+
+  await database.query(
+    `update public.commission_final_deliveries
+     set expires_at = now() + interval '2 hours'
+     where id = $1`,
+    [batch.delivery_id],
+  );
+  await finalizeBatch(batch.delivery_id, fileId);
+  const { rows } = await database.query(
+    'select status from public.commission_final_deliveries where id = $1',
+    [batch.delivery_id],
+  );
+  assert.equal(rows[0].status, 'AWAITING_CLIENT_REVIEW', 'finalization uses reservation expiry, not the upload cutoff');
 });
 
 test('partial resubmission preserves the prior revision-requested current batch', async () => {
@@ -411,6 +507,21 @@ test('partial resubmission preserves the prior revision-requested current batch'
 
 test('expired partial uploads are claimable for cleanup without deleting delivery history', async () => {
   const commissionId = await createCommission();
+  const previousBatch = await beginBatch(commissionId);
+  const previousFileId = previousBatch.files[0].file_id;
+  await reserveObject(previousBatch.delivery_id, previousFileId);
+  await finalizeBatch(previousBatch.delivery_id, previousFileId);
+
+  await setIdentity('authenticated', testIds.client);
+  try {
+    await database.query(
+      'select public.request_commission_final_revision($1, $2)',
+      [previousBatch.delivery_id, 'Please revise the final image.'],
+    );
+  } finally {
+    await resetIdentity();
+  }
+
   const batch = await beginBatch(commissionId);
   const fileId = batch.files[0].file_id;
   const path = await reserveObject(batch.delivery_id, fileId);
@@ -420,6 +531,42 @@ test('expired partial uploads are claimable for cleanup without deleting deliver
      where id = $1`,
     [batch.delivery_id],
   );
+
+  await setIdentity('service_role', testIds.artist);
+  try {
+    await assert.rejects(
+      database.query(
+        'select * from public.get_final_delivery_upload_targets($1, $2)',
+        [batch.delivery_id, testIds.artist],
+      ),
+      /Final Delivery upload reservation has expired/i,
+    );
+  } finally {
+    await resetIdentity();
+  }
+
+  await assert.rejects(
+    finalizeBatch(batch.delivery_id, fileId),
+    /Final Delivery upload session has expired/i,
+  );
+
+  await setIdentity('authenticated', testIds.artist);
+  try {
+    const { rows } = await database.query(
+      'select public.can_upload_final_delivery_object($1) as allowed',
+      [path],
+    );
+    assert.equal(rows[0].allowed, false, 'expired reservations cannot authorize Storage uploads');
+    await assert.rejects(
+      database.query(
+        'insert into storage.objects (bucket_id, name) values ($1, $2)',
+        ['commission-final-deliveries', path + '-expired'],
+      ),
+      /row-level security|policy/i,
+    );
+  } finally {
+    await resetIdentity();
+  }
 
   await setIdentity('service_role', testIds.artist);
   try {
@@ -436,16 +583,24 @@ test('expired partial uploads are claimable for cleanup without deleting deliver
   }
 
   const { rows } = await database.query(
-    `select delivery.status, delivery.cleanup_completed_at, count(file.id)::int as file_count
+    `select delivery.status, delivery.is_current, delivery.cleanup_completed_at,
+            count(file.id)::int as file_count
      from public.commission_final_deliveries as delivery
      join public.commission_final_delivery_files as file on file.delivery_id = delivery.id
-     where delivery.id = $1
-     group by delivery.id`,
-    [batch.delivery_id],
+     where delivery.commission_id = $1
+     group by delivery.id
+     order by delivery.attempt_number`,
+    [commissionId],
   );
-  assert.equal(rows[0].status, 'ABANDONED');
-  assert.ok(rows[0].cleanup_completed_at);
-  assert.equal(rows[0].file_count, 1, 'cleanup preserves reserved file history');
+  assert.deepEqual(rows.map(({ status, is_current, cleanup_completed_at, file_count }) => ({
+    status,
+    is_current,
+    cleanup_completed: cleanup_completed_at !== null,
+    file_count,
+  })), [
+    { status: 'REVISION_REQUESTED', is_current: true, cleanup_completed: false, file_count: 1 },
+    { status: 'ABANDONED', is_current: false, cleanup_completed: true, file_count: 1 },
+  ]);
 });
 
 test('completion keeps all existing safeguards and requires acceptance only when flagged', async (t) => {

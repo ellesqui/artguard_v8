@@ -5,6 +5,9 @@ import {
 } from './finalDeliveryValidation.ts';
 
 const BUCKET = 'commission-final-deliveries';
+const UPLOAD_CUTOFF_ERROR_CODE = 'FINAL_DELIVERY_UPLOAD_CUTOFF:';
+const UPLOAD_CUTOFF_MESSAGE =
+  'New upload links are available only when more than three hours remain in the reservation.';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCAL_ORIGINS = new Set([
   'http://localhost:5173',
@@ -97,7 +100,23 @@ async function getUploadTargets(
     p_delivery_id: deliveryId,
     p_actor_id: actorId,
   });
+  if (error?.message.startsWith(UPLOAD_CUTOFF_ERROR_CODE)) {
+    throw new Error(UPLOAD_CUTOFF_MESSAGE);
+  }
   if (error) throw new Error('Unable to verify Final Delivery upload authorization.');
+  return getArray<UploadTarget>(data);
+}
+
+async function getVerificationTargets(
+  admin: ReturnType<typeof getServiceClient>,
+  deliveryId: string,
+  actorId: string,
+): Promise<UploadTarget[]> {
+  const { data, error } = await admin.rpc('get_final_delivery_verification_targets', {
+    p_delivery_id: deliveryId,
+    p_actor_id: actorId,
+  });
+  if (error) throw new Error('Unable to verify Final Delivery submission authorization.');
   return getArray<UploadTarget>(data);
 }
 
@@ -144,7 +163,15 @@ async function handleUploadUrl(
   if (!validUuid(body.deliveryId) || !validUuid(body.fileId)) {
     return jsonResponse({ error: 'Invalid Final Delivery file request.' }, 400, origin);
   }
-  const targets = await getUploadTargets(admin, body.deliveryId, actorId);
+  let targets: UploadTarget[];
+  try {
+    targets = await getUploadTargets(admin, body.deliveryId, actorId);
+  } catch (error) {
+    if (error instanceof Error && error.message === UPLOAD_CUTOFF_MESSAGE) {
+      return jsonResponse({ error: error.message }, 409, origin);
+    }
+    throw error;
+  }
   const target = targets.find((file) => file.file_id === body.fileId);
   if (!target) return jsonResponse({ error: 'Final Delivery file is not available for upload.' }, 404, origin);
 
@@ -172,7 +199,7 @@ async function handleVerifySubmit(
   if (!validUuid(body.deliveryId)) {
     return jsonResponse({ error: 'Invalid Final Delivery batch.' }, 400, origin);
   }
-  const targets = await getUploadTargets(admin, body.deliveryId, actorId);
+  const targets = await getVerificationTargets(admin, body.deliveryId, actorId);
   if (targets.length === 0) {
     return jsonResponse({ error: 'No reserved files are available for this upload.' }, 409, origin);
   }

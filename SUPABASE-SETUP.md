@@ -2,6 +2,16 @@
 
 The code is ready for real multi-user accounts, profile discovery, chat, read state, reactions, and online/last-seen presence.
 
+## Final Delivery staged deployment
+
+For the Final Delivery database, Edge Function, frontend, activation, smoke-test,
+STOP-condition, and rollback sequence, use the canonical runbook:
+[FINAL-DELIVERY-DEPLOYMENT.md](./FINAL-DELIVERY-DEPLOYMENT.md).
+
+Do not apply `supabase/commission-final-delivery.sql`. Apply the foundation
+migration first and the activation migration only after Edge Functions and the
+frontend have passed verification.
+
 ## 1. Create the Supabase project
 
 Create a project in Supabase and open its SQL Editor.
