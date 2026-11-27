@@ -146,8 +146,7 @@ test('workspace keeps one primary action visible and places mobile quote context
 
 test('accepted pre-work state uses a compact notice and retains active work and Final Delivery gates', async () => {
   const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
-  assert.match(page, /realCommission\.status === 'ACCEPTED' && \(\s*<section className="workspace-pre-work-status"/);
-  assert.match(page, /Work begins after payment confirmation and the Artist starts the commission/);
+  assert.doesNotMatch(page, /workspace-pre-work-status/);
   assert.match(page, /realCommission\.status === 'IN_PROGRESS'\s*\|\|\s*realCommission\.status === 'REVISION_REQUESTED'/);
   assert.match(page, /finalDeliveryRequired && \['IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'\]/);
 });
@@ -155,16 +154,20 @@ test('accepted pre-work state uses a compact notice and retains active work and 
 test('accepted payment copy is role-specific and only Clients receive the confirmation action', async () => {
   const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
 
-  assert.match(page, /Simulated Payment Confirmation Needed/);
+  assert.match(page, /Payment due/);
+  assert.match(page, /Pay \{formatDemoAmount\(realCommission\.amount!, realCommission\.currency!\)\}/);
   assert.match(page, /Waiting for Client/);
-  assert.match(page, /The Client needs to confirm the simulated payment before you can start this commission/);
-  assert.match(page, /Confirm the simulated payment to allow the Artist to start working\. No real money will be charged or transferred/);
-  assert.match(page, /realCommission\.status === 'ACCEPTED' && isClient && canStartDemoPayment[\s\S]*?Confirm Simulated Payment/);
+  assert.match(page, /The Client needs to confirm the payment before you can start this commission/);
+  assert.match(page, /Pay the agreed amount to start your commission/);
+  assert.match(page, /realCommission\.status === 'ACCEPTED' && isClient && canStartDemoPayment[\s\S]*?Pay /);
   assert.match(page, /realCommission\.status === 'ACCEPTED' && isArtist[\s\S]*?Start Commission/);
-  assert.match(page, /<span className="section-title">Payment Status<\/span>/);
+  assert.match(page, /realCommission\.status !== 'ACCEPTED'\s*&&\s*commissionPayment !== null/);
+  assert.match(page, /Demo checkout — no real charge/);
+  assert.match(page, /<h2 id="demo-payment-title">Payment confirmation<\/h2>/);
+  assert.match(page, /Confirm Payment/);
   assert.doesNotMatch(page, /<div className="t-xs c-low workspace-action-note">Payment is required before work can begin/);
-  assert.doesNotMatch(page, /Payment Required/);
-  assert.doesNotMatch(page, /Waiting for Simulated Payment/);
+  assert.doesNotMatch(page, /Simulated Payment Confirmation Needed/);
+  assert.doesNotMatch(page, /Confirm Simulated Payment/);
 });
 
 test('status freshness and modal keyboard handling use safe focus and dismiss rules', async () => {

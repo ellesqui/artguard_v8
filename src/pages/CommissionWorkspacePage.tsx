@@ -1236,7 +1236,8 @@ export function CommissionWorkspacePage() {
       canRefundPayment,
       paymentStatus: commissionPayment?.status ?? null,
     });
-    const showPaymentPanel = (realCommission.status === 'ACCEPTED' || commissionPayment !== null)
+    const showPaymentPanel = realCommission.status !== 'ACCEPTED'
+      && commissionPayment !== null
       && !collapsePaidPaymentPanel;
     const paymentAmountMatchesCommission = realCommission.amount !== null
       && realCommission.amount !== undefined
@@ -1408,13 +1409,13 @@ export function CommissionWorkspacePage() {
     } else if (realCommission.status === 'ACCEPTED') {
       nextStepTitle = isArtist
         ? requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid ? 'Waiting for Client' : 'Ready to Start Work'
-        : requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid ? 'Simulated Payment Confirmation Needed' : 'Waiting for Artist to Start';
+        : requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid ? 'Payment due' : 'Waiting for Artist to Start';
       nextStepDescription = isClient
         ? requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
-          ? 'Confirm the simulated payment to allow the Artist to start working. No real money will be charged or transferred.'
+          ? 'Pay the agreed amount to start your commission.'
           : 'Your Artist will start work when they are ready.'
         : requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
-          ? 'The Client needs to confirm the simulated payment before you can start this commission.'
+          ? 'The Client needs to confirm the payment before you can start this commission.'
           : 'Start work when you are ready to begin the commission.';
     } else if (realCommission.status === 'IN_PROGRESS') {
       const nextAction = getInProgressCommissionNextAction({
@@ -1644,7 +1645,7 @@ export function CommissionWorkspacePage() {
                 onClick={openDemoPaymentConfirmation}
                 disabled={paymentActionLoading}
               >
-                Confirm Simulated Payment
+                Pay {formatDemoAmount(realCommission.amount!, realCommission.currency!)}
               </button>
             )}
             {realCommission.status === 'ACCEPTED' && isArtist && (
@@ -1803,19 +1804,6 @@ export function CommissionWorkspacePage() {
             </button>
           )}
         </section>
-
-        {realCommission.status === 'ACCEPTED' && (
-          <section className="workspace-pre-work-status" aria-label="Work progress" role="status">
-            <strong>Work not started</strong>
-            <p>
-              {requiresPaidPaymentBeforeStart && !matchingPaymentIsPaid
-                ? 'Work begins after payment confirmation and the Artist starts the commission.'
-                : requiresPaidPaymentBeforeStart
-                  ? 'Payment is confirmed. Work stages and uploads appear after the Artist starts the commission.'
-                  : 'Work stages and uploads appear after the Artist starts the commission.'}
-            </p>
-          </section>
-        )}
 
         {(realCommission.status === 'IN_PROGRESS'
           || realCommission.status === 'REVISION_REQUESTED'
@@ -2357,7 +2345,6 @@ export function CommissionWorkspacePage() {
                   </div>
                   <div className="row-between workspace-demo-payment-dialog-heading">
                     <h2 id="demo-payment-title">Payment successful</h2>
-                    <span className="badge badge-warning">SIMULATED</span>
                   </div>
                   <div className="workspace-demo-payment-receipt">
                     <div className="workspace-demo-payment-receipt-amount">
@@ -2374,7 +2361,7 @@ export function CommissionWorkspacePage() {
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Payment method</span>
-                      <strong>Simulated transfer</strong>
+                      <strong>Demo checkout</strong>
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Transaction reference</span>
@@ -2389,7 +2376,6 @@ export function CommissionWorkspacePage() {
                       <strong className="c-success">Transfer complete</strong>
                     </div>
                   </div>
-                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
                   <div className="account-dialog-actions">
                     <button type="button" className="btn btn-primary btn-sm" onClick={closeDemoPaymentDialog}>Done</button>
                   </div>
@@ -2397,19 +2383,14 @@ export function CommissionWorkspacePage() {
               ) : demoPaymentDialogStep === 'processing' ? (
                 <div className="workspace-demo-payment-processing" role="status" aria-live="polite">
                   <span className="workspace-demo-payment-spinner" aria-hidden="true" />
-                  <span className="badge badge-warning">SIMULATED</span>
                   <h2 id="demo-payment-title">Processing payment</h2>
-                  <p>Recording your simulated payment.</p>
-                  <div className="t-xs c-low">Please wait while the payment record is confirmed.</div>
-                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
+                  <p>Confirming checkout.</p>
                 </div>
               ) : (
                 <>
                   <div className="row-between workspace-demo-payment-dialog-heading">
-                    <h2 id="demo-payment-title">Confirm Simulated Payment</h2>
-                    <span className="badge badge-warning">SIMULATED</span>
+                    <h2 id="demo-payment-title">Payment confirmation</h2>
                   </div>
-                  <p>Confirm the simulated payment to allow the Artist to start working. No real money will be charged or transferred.</p>
                   <div className="workspace-demo-payment-receipt">
                     <div className="workspace-demo-payment-receipt-amount">
                       <span className="t-xs c-low">Amount due</span>
@@ -2425,15 +2406,15 @@ export function CommissionWorkspacePage() {
                     </div>
                     <div className="workspace-demo-payment-detail">
                       <span>Payment method</span>
-                      <strong>Simulated transfer</strong>
+                      <strong>Demo checkout</strong>
                     </div>
                   </div>
-                  <div className="workspace-demo-payment-disclaimer">No real money is transferred.</div>
+                  <div className="workspace-demo-payment-disclaimer">Demo checkout — no real charge.</div>
                   {paymentError && <div className="t-xs c-danger" role="alert" style={{ marginTop: 10 }}>{paymentError}</div>}
                   <div className="account-dialog-actions">
                     <button type="button" className="btn btn-ghost btn-sm" onClick={closeDemoPaymentDialog} disabled={paymentActionLoading}>Cancel</button>
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleConfirmDemoPayment()} disabled={paymentActionLoading}>
-                      Confirm Simulated Payment
+                      Confirm Payment
                     </button>
                   </div>
                 </>
