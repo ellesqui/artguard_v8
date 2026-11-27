@@ -1849,3 +1849,45 @@
     flex-direction: column;
   }
 }
+
+@media (min-width: 1000px) {
+  .workspace-next-action.workspace-next-action-payment-required {
+    display: grid;
+  }
+}
+
+@media (max-width: 999px) {
+  .workspace-commission-payment-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    padding: 10px 12px !important;
+  }
+
+  .workspace-commission-payment-card .workspace-payment-card-header {
+    flex: 1 0 100%;
+    margin-bottom: 0;
+  }
+
+  .workspace-commission-payment-card .workspace-payment-status,
+  .workspace-commission-payment-card .workspace-payment-disclosure {
+    margin: 0;
+  }
+
+  .workspace-commission-payment-card .workspace-payment-status {
+    flex: 0 0 auto;
+  }
+
+  .workspace-commission-payment-card .workspace-payment-disclosure {
+    flex: 1 1 160px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .workspace-commission-payment-card .workspace-payment-refund,
+  .workspace-commission-payment-card > [role="alert"],
+  .workspace-commission-payment-card .workspace-payment-actions {
+    flex: 1 0 100%;
+  }
+}

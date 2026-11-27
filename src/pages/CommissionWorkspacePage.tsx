@@ -1151,6 +1151,10 @@ export function CommissionWorkspacePage() {
           && !commissionPayment.provider_verified_at
         )
       );
+    const showClientPaymentRequired = isClient
+      && realCommission.status === 'ACCEPTED'
+      && requiresPaidPaymentBeforeStart
+      && !matchingPaymentIsPaid;
     const matchingDemoPaymentIsPaid = paymentStatusKnown
       && commissionPayment?.commission_id === realCommission.id
       && commissionPayment.payer_id === realCommission.client_id
@@ -1507,7 +1511,10 @@ export function CommissionWorkspacePage() {
       >
         <div className="workspace-layout">
         <div className="workspace-main-stack">
-        <section className="workspace-next-action" aria-labelledby="workspace-next-action-title">
+        <section
+          className={`workspace-next-action${showClientPaymentRequired ? ' workspace-next-action-payment-required' : ''}`}
+          aria-labelledby="workspace-next-action-title"
+        >
           <div className="workspace-next-action-copy">
             <h2 id="workspace-next-action-title">{nextStepTitle}</h2>
             <p>{nextStepDescription}</p>

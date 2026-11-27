@@ -117,7 +117,7 @@ test('mobile workspace orders Next Action, main work, Final Delivery, overview, 
   const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
   const css = await readFile(new URL('../src/pages/CommissionWorkspacePage.css', import.meta.url), 'utf8');
   const orderedMarkup = [
-    page.indexOf('className="workspace-next-action"'),
+    page.indexOf('className={`workspace-next-action'),
     page.indexOf('<main className="workspace-main-column">'),
     page.indexOf('<h2 id="workspace-brief-title">'),
     page.indexOf('<h2>Work Stages</h2>'),
@@ -135,6 +135,11 @@ test('mobile workspace orders Next Action, main work, Final Delivery, overview, 
   assert.match(mobileRules, /\.workspace-next-action\s*\{\s*order:\s*1/);
   assert.match(mobileRules, /\.workspace-main-column\s*\{\s*order:\s*2/);
   assert.match(mobileRules, /\.workspace-mobile-overview\s*\{[\s\S]*?order:\s*3/);
+
+  assert.match(page, /showClientPaymentRequired = isClient[\s\S]*requiresPaidPaymentBeforeStart[\s\S]*!matchingPaymentIsPaid/);
+  assert.match(css, /@media \(min-width: 1000px\) \{[\s\S]*?\.workspace-next-action\.workspace-next-action-payment-required\s*\{\s*display:\s*grid/);
+  const compactPaymentRules = css.slice(css.lastIndexOf('@media (max-width: 999px) {'));
+  assert.match(compactPaymentRules, /\.workspace-commission-payment-card\s*\{\s*display:\s*flex/);
 });
 
 test('legacy UI remains hidden and Final Delivery is only mounted behind the feature flag', async () => {
