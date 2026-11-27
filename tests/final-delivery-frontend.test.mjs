@@ -152,6 +152,21 @@ test('accepted pre-work state uses a compact notice and retains active work and 
   assert.match(page, /finalDeliveryRequired && \['IN_PROGRESS', 'REVISION_REQUESTED', 'COMPLETED'\]/);
 });
 
+test('accepted payment copy is role-specific and only Clients receive the confirmation action', async () => {
+  const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
+
+  assert.match(page, /Simulated Payment Confirmation Needed/);
+  assert.match(page, /Waiting for Client/);
+  assert.match(page, /The Client needs to confirm the simulated payment before you can start this commission/);
+  assert.match(page, /Confirm the simulated payment to allow the Artist to start working\. No real money will be charged or transferred/);
+  assert.match(page, /realCommission\.status === 'ACCEPTED' && isClient && canStartDemoPayment[\s\S]*?Confirm Simulated Payment/);
+  assert.match(page, /realCommission\.status === 'ACCEPTED' && isArtist[\s\S]*?Start Commission/);
+  assert.match(page, /<span className="section-title">Payment Status<\/span>/);
+  assert.doesNotMatch(page, /<div className="t-xs c-low workspace-action-note">Payment is required before work can begin/);
+  assert.doesNotMatch(page, /Payment Required/);
+  assert.doesNotMatch(page, /Waiting for Simulated Payment/);
+});
+
 test('status freshness and modal keyboard handling use safe focus and dismiss rules', async () => {
   const page = await readFile(new URL('../src/pages/CommissionWorkspacePage.tsx', import.meta.url), 'utf8');
   const hook = await readFile(new URL('../src/components/ui/useDialogAccessibility.ts', import.meta.url), 'utf8');
