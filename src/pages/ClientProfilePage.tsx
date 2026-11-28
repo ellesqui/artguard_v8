@@ -322,7 +322,7 @@ export function ClientProfilePage() {
   };
 
   const coverBanner = (
-    <div className="profile-cover-banner" aria-label="Client cover photo">
+    <div className="profile-cover-banner profile-cover-banner--with-toolbar" aria-label="Client cover photo">
       {coverUrl && (
         <img
           key={coverUrl}
@@ -782,7 +782,6 @@ export function ClientProfilePage() {
         contentClassName="client-profile-content"
         header={
           <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
-            {coverBanner}
             <div className="px-hd row-between profile-page-toolbar">
               <IconButton icon="chevron-l" onClick={() => navigate(-1)} ariaLabel="Back" />
               <span className="h-title profile-title-font">Client Profile</span>
@@ -791,6 +790,7 @@ export function ClientProfilePage() {
           </div>
         }
       >
+        {coverBanner}
         <section className="client-profile-identity-card" aria-label="Client profile">
           <div className="client-profile-banner profile-cover-spacer" aria-hidden="true" />
           <div className="client-profile-identity-body">
@@ -808,13 +808,17 @@ export function ClientProfilePage() {
                   <span className="profile-role-badge">Client</span>
                 </div>
               </div>
+              {(viewedClient.bio || viewedClientIsOwner) && (
+                <div className="client-profile-details">
+                  {viewedClient.bio && <p className="client-profile-bio">{viewedClient.bio}</p>}
+                  {viewedClientIsOwner && (
+                    <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
+                      Edit Profile
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            {viewedClient.bio && <p className="client-profile-bio">{viewedClient.bio}</p>}
-            {viewedClientIsOwner && (
-              <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
-                Edit Profile
-              </button>
-            )}
           </div>
         </section>
 
@@ -1019,7 +1023,6 @@ export function ClientProfilePage() {
       contentClassName="client-profile-content"
       header={
         <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
-          {coverBanner}
           <div className="px-hd row-between profile-page-toolbar">
             <span className="h-title">My Profile</span>
             <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
@@ -1028,6 +1031,7 @@ export function ClientProfilePage() {
       }
       footer={<BottomNav active="profile" />}
     >
+      {coverBanner}
       <section className="client-profile-identity-card" aria-label="Client profile">
         <div className="client-profile-banner profile-cover-spacer" aria-hidden="true" />
         <div className="client-profile-identity-body">
@@ -1045,11 +1049,13 @@ export function ClientProfilePage() {
                 <span className="profile-role-badge">Client</span>
               </div>
             </div>
+            <div className="client-profile-details">
+              {user?.bio && <p className="client-profile-bio">{user.bio}</p>}
+              <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
+                Edit Profile
+              </button>
+            </div>
           </div>
-          {user?.bio && <p className="client-profile-bio">{user.bio}</p>}
-          <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
-            Edit Profile
-          </button>
         </div>
       </section>
 

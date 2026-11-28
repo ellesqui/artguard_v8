@@ -24,7 +24,7 @@
   grid-template-rows: 44px 112px auto;
   column-gap: 20px;
   min-width: 0;
-  margin-top: calc(0px - var(--profile-cover-rise));
+  margin-top: -219px;
   margin-bottom: 20px;
   min-height: 430px;
   padding-top: var(--profile-cover-rise);
@@ -114,6 +114,7 @@
   grid-column: 2;
   display: grid;
   min-width: 0;
+  margin-top: -28px;
   gap: 8px;
 }
 
@@ -407,6 +408,7 @@
     grid-template-columns: 88px minmax(0, 1fr);
     grid-template-rows: 44px 50px auto;
     min-height: 376px;
+    margin-top: -153px;
     border-radius: 0 0 16px 16px;
   }
 
@@ -440,6 +442,7 @@
 
   .artist-profile-details {
     grid-column: 2;
+    margin-top: -20px;
   }
 
   .artist-profile-display-name {
@@ -484,6 +487,10 @@
     grid-template-rows: minmax(82px, auto);
     column-gap: 10px;
     min-height: 82px;
+  }
+
+  .artist-profile-details {
+    margin-top: -12px;
   }
 
   .artist-profile-mobile-tabs {

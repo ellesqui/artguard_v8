@@ -764,7 +764,7 @@ export function ArtistProfilePage() {
   );
 
   const coverBanner = (
-    <div className="profile-cover-banner">
+    <div className={`profile-cover-banner${isSelf ? ' profile-cover-banner--with-toolbar' : ''}`}>
       {coverUrl && (
         <img
           key={coverUrl}
@@ -902,15 +902,14 @@ export function ArtistProfilePage() {
     <ScreenShell
       contentClassName={`artist-profile-content${isSelf ? '' : ' artist-profile-content--public'}`}
       header={
-        <div className={`profile-page-shell-header${isSelf ? ' profile-page-shell-header--with-toolbar' : ''}`}>
-          {coverBanner}
-          {isSelf && (
+        isSelf ? (
+          <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
             <div className="px-hd row-between profile-page-toolbar">
               <span className="h-title">My Profile</span>
               <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
             </div>
-          )}
-        </div>
+          </div>
+        ) : undefined
       }
       footer={
         isSelf ? (
@@ -937,6 +936,7 @@ export function ArtistProfilePage() {
         )
       }
     >
+      {coverBanner}
       <div className="artist-profile-layout-content">
         <section className="artist-profile-header" aria-label="Artist profile">
           {profileHeaderControls}
