@@ -7,6 +7,7 @@ interface ProtectedArtworkDisplayProps {
   settings?: Pick<ProtectionSettings, 'dynamic_cloaking' | 'canvas_tiling' | 'right_click_shield'>;
   className?: string;
   fitMode?: 'cover' | 'contain';
+  fillContainer?: boolean;
   onContextMenuBlocked?: () => void;
 }
 
@@ -102,6 +103,7 @@ export function ProtectedArtworkDisplay({
   settings,
   className,
   fitMode = 'cover',
+  fillContainer = false,
   onContextMenuBlocked,
 }: ProtectedArtworkDisplayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -156,8 +158,8 @@ export function ProtectedArtworkDisplay({
       onDragStart={handleDragStart}
       style={{
         width: '100%',
-        height: fitMode === 'contain' ? 'auto' : '100%',
-        aspectRatio: fitMode === 'contain' ? sourceAspectRatio ?? 1 : undefined,
+        height: fillContainer || fitMode !== 'contain' ? '100%' : 'auto',
+        aspectRatio: fillContainer ? undefined : fitMode === 'contain' ? sourceAspectRatio ?? 1 : undefined,
       }}
     >
       {renderError ? <span role="img" aria-label={alt}>{renderError}</span> : !useCanvas ? (

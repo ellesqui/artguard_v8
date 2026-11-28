@@ -15,6 +15,7 @@ import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, initialsFor, usernameFromEmail, type PublicProfile } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { isVerifiedArtistStatus } from '../types/auth';
+import { readCoverPhotoDataUrl } from '../lib/profileCoverPhoto';
 import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import { createPublicPortfolioSignedUrl, listPublicArtistArtworks, type PublicArtworkRecord } from '../lib/supabaseArtworks';
 import { listArtistReviews, type ArtistReview } from '../lib/supabaseReviews';
@@ -54,6 +55,7 @@ interface ArtistProfileView {
   initials: string;
   avatarStyle: CSSProperties;
   avatarDataUrl?: string | null;
+  coverDataUrl?: string | null;
   tags: string[];
   bio: string;
   verified: boolean;
@@ -84,12 +86,17 @@ function formatArtistPostBudget(post: CommissionPost): string {
 export function ArtistProfilePage() {
   const { artistId } = useParams<{ artistId?: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, updateProfile } = useAuth();
   const { startConversation } = useChat();
   const { toast, showToast } = useMockToast();
   const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
   const [startingConversation, setStartingConversation] = useState(false);
   const [messageError, setMessageError] = useState<string>();
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+  const [coverDraft, setCoverDraft] = useState<string>();
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [coverError, setCoverError] = useState<string>();
+  const [loadedCoverUrl, setLoadedCoverUrl] = useState<string>();
 
   const isSelf = !artistId;
   const isRealSelf = isSelf && isSupabaseConfigured && user?.role === 'artist';
@@ -354,6 +361,7 @@ export function ArtistProfilePage() {
         initials: realProfile!.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join(''),
         avatarStyle: {},
         avatarDataUrl: realProfile!.avatar_data_url,
+        coverDataUrl: realProfile!.cover_data_url,
         tags: realProfile!.interests ?? [],
         bio: realProfile!.bio ?? '',
         verified: isVerifiedArtistStatus(realProfile!.artist_verification_status),
@@ -370,6 +378,7 @@ export function ArtistProfilePage() {
         initials: (user?.name || CURRENT_ARTIST.fullName).slice(0, 1).toUpperCase(),
         avatarStyle: {},
         avatarDataUrl: user?.avatarDataUrl,
+        coverDataUrl: user?.coverDataUrl,
         tags: user?.interests && user.interests.length > 0 ? user.interests : CURRENT_ARTIST.tags,
         rating: CURRENT_ARTIST.rating,
         reviewCount: CURRENT_ARTIST.reviewCount,
@@ -391,6 +400,7 @@ export function ArtistProfilePage() {
           initials: realProfile!.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join(''),
           avatarStyle: {},
           avatarDataUrl: realProfile!.avatar_data_url,
+          coverDataUrl: realProfile!.cover_data_url,
           tags: realProfile!.interests ?? [],
           bio: realProfile!.bio ?? '',
           verified: isVerifiedArtistStatus(realProfile!.artist_verification_status),
@@ -401,6 +411,10 @@ export function ArtistProfilePage() {
           source: 'supabase' as const,
         };
 
+    const coverUrl = isViewingOwnProfile && coverDraft
+      ? coverDraft
+      : profile.coverDataUrl ?? null;
+    const canChangeCover = isViewingOwnProfile;
     const reviewAverage = artistReviews.length > 0
       ? artistReviews.reduce((total, review) => total + review.rating, 0) / artistReviews.length
       : null;
@@ -734,6 +748,40 @@ export function ArtistProfilePage() {
     }
   };
 
+  const handleCoverPhotoSelection = async (file?: File) => {
+    if (!file) return;
+    setCoverError(undefined);
+    try {
+      setCoverDraft(await readCoverPhotoDataUrl(file));
+      setLoadedCoverUrl(undefined);
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : 'Could not read that cover photo.');
+    }
+  };
+
+  const saveCoverPhoto = async () => {
+    if (!coverDraft || !user || !canChangeCover || coverSaving) return;
+    setCoverSaving(true);
+    setCoverError(undefined);
+    try {
+      const savedCover = coverDraft;
+      const result = await updateProfile({ coverDataUrl: savedCover });
+      if (!result.success) {
+        setCoverError(result.error ?? 'Could not save your cover photo.');
+        return;
+      }
+      setRealProfile((current) => current?.id === user.id
+        ? { ...current, cover_data_url: savedCover }
+        : current);
+      setCoverDraft(undefined);
+      showToast('Cover photo updated');
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : 'Could not save your cover photo.');
+    } finally {
+      setCoverSaving(false);
+    }
+  };
+
   return (
     <ScreenShell
       padContent={false}
@@ -771,16 +819,64 @@ export function ArtistProfilePage() {
       <div className="app-content-inner artist-profile-content">
         <section className="artist-profile-header" aria-label="Artist profile">
           {profileHeaderControls}
-          <div className="artist-profile-banner" aria-hidden="true" />
-          <ProfileAvatar
-            className="avatar avatar-xl artist-avatar"
-            imageUrl={profile.avatarDataUrl}
-            initials={profile.initials}
-            style={profile.avatarStyle}
-          />
+          <div className="artist-profile-banner" aria-hidden="true">
+            {coverUrl && (
+              <img
+                key={coverUrl}
+                className={`profile-cover-image${loadedCoverUrl === coverUrl ? ' is-loaded' : ''}`}
+                src={coverUrl}
+                alt=""
+                onLoad={() => setLoadedCoverUrl(coverUrl)}
+              />
+            )}
+          </div>
+          {canChangeCover && (
+            <>
+              <input
+                ref={coverFileInputRef}
+                className="profile-cover-file-input"
+                type="file"
+                accept="image/png,image/jpeg"
+                aria-label="Select cover photo"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = '';
+                  void handleCoverPhotoSelection(file);
+                }}
+              />
+              <div className="profile-cover-actions">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
+                  <Icon name="image" />
+                  {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
+                </button>
+                {coverDraft && (
+                  <>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto()} disabled={coverSaving}>
+                      {coverSaving ? 'Saving…' : 'Save Cover'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
+                      disabled={coverSaving}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+              </div>
+              {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
+            </>
+          )}
 
           <div className="artist-profile-info">
             <div className="artist-profile-identity">
+              <ProfileAvatar
+                className="avatar avatar-xl artist-avatar"
+                imageUrl={profile.avatarDataUrl}
+                initials={profile.initials}
+                style={profile.avatarStyle}
+              />
               <div className="artist-profile-display-name">
                 <span>{profile.name}</span>
                 {profile.verified && (

@@ -443,6 +443,7 @@ async function publicUserFromSession(
     bio: profile?.bio ?? undefined,
     interests: profile?.interests ?? undefined,
     avatarDataUrl: profile?.avatar_data_url ?? undefined,
+    coverDataUrl: profile?.cover_data_url ?? undefined,
     onboarded: Boolean(profile?.onboarded ?? fallback.onboarded),
     isPro: Boolean(profile?.is_pro),
     lastSeenAt: profile?.last_seen_at ?? undefined,
@@ -469,6 +470,7 @@ async function refreshProfileForUser(userId: string, fallback: AuthUser): Promis
           bio: profile.bio ?? undefined,
           interests: profile.interests ?? undefined,
           avatarDataUrl: profile.avatar_data_url ?? undefined,
+          coverDataUrl: profile.cover_data_url ?? undefined,
           onboarded: Boolean(profile.onboarded),
           isPro: Boolean(profile.is_pro),
           lastSeenAt: profile.last_seen_at ?? undefined,
@@ -797,6 +799,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             bio: profile.bio ?? undefined,
             interests: profile.interests ?? undefined,
             avatarDataUrl: profile.avatar_data_url ?? undefined,
+            coverDataUrl: profile.cover_data_url ?? undefined,
             onboarded: Boolean(profile.onboarded),
             isPro: Boolean(profile.is_pro),
           };
@@ -1222,6 +1225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bio: profile.bio ?? undefined,
         interests: profile.interests ?? undefined,
         avatarDataUrl: profile.avatar_data_url ?? undefined,
+        coverDataUrl: profile.cover_data_url ?? undefined,
         onboarded: Boolean(profile.onboarded),
         isPro: Boolean(profile.is_pro),
         lastSeenAt: profile.last_seen_at ?? undefined,
@@ -1413,6 +1417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bio: profile.bio ?? undefined,
         interests: profile.interests ?? undefined,
         avatarDataUrl: profile.avatar_data_url ?? undefined,
+        coverDataUrl: profile.cover_data_url ?? undefined,
         onboarded: Boolean(profile.onboarded),
         isPro: Boolean(profile.is_pro),
         lastSeenAt: profile.last_seen_at ?? undefined,
@@ -1519,6 +1524,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bio: patch.bio,
       interests: patch.interests,
       avatar_data_url: patch.avatarDataUrl,
+      cover_data_url: patch.coverDataUrl,
       onboarded: patch.onboarded,
     };
     const { error } = await supabase.from('profiles').update(dbPatch).eq('id', user.id);

@@ -550,6 +550,7 @@ function ProtectionPageContent() {
                     alt={`${artwork.title} protected preview`}
                     settings={settingsByArtwork[artwork.id]}
                     fitMode="contain"
+                    fillContainer
                     onContextMenuBlocked={() => void handleContextMenuBlocked(artwork)}
                   />
                 ) : (
@@ -563,6 +564,9 @@ function ProtectionPageContent() {
                           : 'Preview unavailable'}
                   </span>
                 )}
+                {artwork.status === 'ready' && previewUrls[artwork.id] && (
+                  <span className="protected-artwork-preview-hint" aria-hidden="true">Preview</span>
+                )}
               </button>
               <div className="protected-artwork-info">
                 <div className="protected-artwork-card-heading">
@@ -570,7 +574,7 @@ function ProtectionPageContent() {
                   <span className="badge badge-accent">{protectionLabel(artwork.protection_level)}</span>
                 </div>
                 <div className="t-xs c-low protected-artwork-meta">
-                  {artwork.original_filename} · {artwork.mime_type.replace('image/', '').toUpperCase()} · {formatFileSize(artwork.file_size_bytes)}
+                  {artwork.mime_type.replace('image/', '').toUpperCase()} · {formatFileSize(artwork.file_size_bytes)}
                 </div>
                 <div className={`t-xs protected-artwork-status ${artwork.status === 'ready' ? 'c-success' : artwork.status === 'failed' ? 'protection-artwork-error' : 'c-low'}`}>
                   {artwork.status === 'ready' ? 'Protected / Ready' : artwork.status === 'processing' ? 'Processing' : artwork.status === 'failed' ? 'Protection Failed' : 'Uploaded'}
@@ -609,6 +613,7 @@ function ProtectionPageContent() {
                 alt={`${preview.artwork.title} large protected preview`}
                 settings={settingsByArtwork[preview.artwork.id]}
                 fitMode="contain"
+                fillContainer
                 onContextMenuBlocked={() => void handleContextMenuBlocked(preview.artwork)}
               />
             </div>

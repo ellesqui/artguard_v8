@@ -217,6 +217,7 @@
 }
 
 .protected-artwork-preview {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
@@ -236,6 +237,16 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.protected-artwork-preview > div {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+}
+
+.protected-artwork-preview-hint {
+  display: none;
 }
 
 .protected-artwork-preview:hover:not(:disabled) {
@@ -911,11 +922,12 @@
 
 @media (max-width: 520px) {
   .protected-artwork-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
   .protected-artwork-preview {
-    height: 100px;
+    height: 92px;
   }
 
   .protection-settings-header {
@@ -943,15 +955,6 @@
     width: 36px;
     height: 36px;
     flex-basis: 36px;
-  }
-
-  .protected-artwork-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
-  .protected-artwork-preview {
-    height: 180px;
   }
 
   .protected-artwork-detail {
@@ -984,11 +987,50 @@
   }
 
   .protected-artwork-info {
-    padding: 12px;
+    padding: 9px;
   }
 
-  .protected-artwork-preview {
-    aspect-ratio: 1.35;
+  .protected-artwork-card-heading {
+    gap: 5px;
+  }
+
+  .protected-artwork-card-heading .badge {
+    font-size: 9px;
+    padding: 3px 6px;
+  }
+
+  .protected-artwork-meta {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    line-height: 1.3;
+  }
+
+  .protected-artwork-status {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+
+  .protected-artwork-open {
+    display: none;
+  }
+
+  .protected-artwork-preview-hint {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 7px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(8, 14, 29, 0.78);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    pointer-events: none;
   }
 
   .protection-category-card {
@@ -1045,5 +1087,25 @@
 
   .protection-snapshot-card .mono {
     font-size: 20px;
+  }
+}
+
+@media (max-width: 375px) {
+  .protected-artwork-preview {
+    height: 80px;
+  }
+
+  .protected-artwork-grid {
+    gap: 8px;
+  }
+
+  .protected-artwork-info {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 340px) {
+  .protected-artwork-grid {
+    grid-template-columns: 1fr;
   }
 }

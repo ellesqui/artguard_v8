@@ -10,6 +10,7 @@ export interface PublicProfile {
   bio?: string | null;
   interests?: string[] | null;
   avatar_data_url?: string | null;
+  cover_data_url?: string | null;
   is_pro?: boolean | null;
   accepting_commissions?: boolean | null;
   onboarded?: boolean | null;
@@ -269,11 +270,23 @@ export async function getPublicProfile(userId: string): Promise<PublicProfile | 
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('profiles')
+    .select(`${PUBLIC_PROFILE_COLUMNS},cover_data_url`)
+    .eq('id', userId)
+    .maybeSingle();
+  if (!error) return data as PublicProfile | null;
+
+  const coverColumnUnavailable = (error.code === '42703' || error.code === 'PGRST204')
+    && error.message.toLowerCase().includes('cover_data_url');
+  if (!coverColumnUnavailable) throw error;
+
+  console.warn('ArtGuard: profile covers are unavailable until the local profile cover migration is applied.');
+  const legacyResult = await supabase
+    .from('profiles')
     .select(PUBLIC_PROFILE_COLUMNS)
     .eq('id', userId)
     .maybeSingle();
-  if (error) throw error;
-  return data as PublicProfile | null;
+  if (legacyResult.error) throw legacyResult.error;
+  return legacyResult.data as PublicProfile | null;
 }
 
 export async function getPublicProfiles(userIds: readonly string[]): Promise<PublicProfile[]> {
