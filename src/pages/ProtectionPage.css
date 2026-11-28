@@ -623,6 +623,18 @@
   -webkit-backdrop-filter: blur(8px);
 }
 
+@media (min-width: 1024px) {
+  .protected-artwork-detail {
+    padding-left: 120px;
+  }
+
+  .protected-artwork-detail-header,
+  .protected-artwork-detail-layout,
+  .protected-artwork-detail-expiry {
+    width: min(calc(100% - 24px), 1120px);
+  }
+}
+
 .protected-artwork-back {
   position: sticky;
   top: 0;
