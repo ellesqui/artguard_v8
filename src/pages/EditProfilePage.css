@@ -1,0 +1,84 @@
+.edit-profile-page {
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding-bottom: 28px;
+}
+
+.edit-profile-form {
+  display: block;
+}
+
+.edit-profile-photo-card {
+  min-height: 116px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: 16px;
+  background: var(--ag-surface);
+  box-sizing: border-box;
+}
+
+.edit-profile-photo-copy {
+  flex: 0 0 auto;
+}
+
+.edit-profile-avatar {
+  width: 84px;
+  height: 84px;
+  margin: 0;
+}
+
+.edit-profile-photo-actions {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.edit-profile-photo-actions .btn {
+  width: auto;
+  min-height: 44px;
+  justify-self: start;
+}
+
+.edit-profile-photo-actions p {
+  margin: 0;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.edit-profile-form .field-label {
+  margin-top: 2px;
+}
+
+.edit-profile-form .input-field,
+.edit-profile-form .textarea-field,
+.edit-profile-form .btn,
+.edit-profile-form .chip {
+  box-sizing: border-box;
+}
+
+.edit-profile-form .btn[type="submit"] {
+  min-height: 44px;
+}
+
+@media (max-width: 520px) {
+  .edit-profile-photo-card {
+    align-items: flex-start;
+  }
+
+  .edit-profile-avatar {
+    width: 72px;
+    height: 72px;
+  }
+
+  .edit-profile-photo-actions {
+    flex: 1;
+  }
+
+  .edit-profile-photo-actions .btn {
+    width: 100%;
+  }
+}

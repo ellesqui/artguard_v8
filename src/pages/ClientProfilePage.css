@@ -3,6 +3,69 @@
   font-weight: 600;
 }
 
+.client-profile-identity-card {
+  position: relative;
+  margin-bottom: 20px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: 18px;
+  background: var(--ag-surface);
+  overflow: hidden;
+}
+
+.client-profile-banner {
+  height: 118px;
+  border-bottom: 1px solid var(--ag-border-soft);
+  background:
+    radial-gradient(circle at 82% 30%, rgba(246, 196, 83, 0.12), transparent 24%),
+    linear-gradient(135deg, rgba(114, 173, 255, 0.08), transparent 58%),
+    var(--ag-surface-2);
+}
+
+.client-profile-identity-body {
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: end;
+  gap: 16px;
+  padding: 0 18px 16px;
+  box-sizing: border-box;
+}
+
+.client-profile-avatar {
+  width: 112px;
+  height: 112px;
+  margin: -44px 0 0;
+  border: 5px solid var(--ag-surface);
+  box-shadow: 0 8px 24px rgba(5, 10, 24, 0.24);
+  z-index: 1;
+}
+
+.client-profile-identity-copy {
+  min-width: 0;
+  padding-top: 12px;
+}
+
+.client-profile-name {
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.client-profile-bio {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: var(--ag-text-mid);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.client-profile-edit-button {
+  min-height: 44px;
+  margin-top: 10px;
+}
+
 .client-profile-request-heading {
   display: flex;
   align-items: center;
@@ -127,7 +190,43 @@
   padding: 1px 4px 1px 1px;
 }
 
+.client-profile-request-tabs {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.client-profile-request-tabs .btn {
+  width: 100%;
+  min-height: 44px;
+}
+
 @media (max-width: 480px) {
+  .client-profile-banner {
+    height: 96px;
+  }
+
+  .client-profile-identity-body {
+    grid-template-columns: 88px minmax(0, 1fr);
+    min-height: 104px;
+    gap: 12px;
+    padding: 0 14px 14px;
+  }
+
+  .client-profile-avatar {
+    width: 88px;
+    height: 88px;
+    margin-top: -34px;
+  }
+
+  .client-profile-name {
+    font-size: 20px;
+  }
+
+  .client-profile-edit-button {
+    width: 100%;
+  }
+
   .client-profile-direct-requests-dialog {
     width: 100%;
     max-height: calc(100dvh - 24px - var(--ag-bottom-nav-space, 0px));

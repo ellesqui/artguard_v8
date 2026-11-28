@@ -771,6 +771,7 @@ export function ArtistProfilePage() {
       <div className="app-content-inner artist-profile-content">
         <section className="artist-profile-header" aria-label="Artist profile">
           {profileHeaderControls}
+          <div className="artist-profile-banner" aria-hidden="true" />
           <ProfileAvatar
             className="avatar avatar-xl artist-avatar"
             imageUrl={profile.avatarDataUrl}
@@ -850,18 +851,74 @@ export function ArtistProfilePage() {
           </div>
         </section>
 
+        <nav className="artist-profile-mobile-tabs" aria-label="Profile sections">
+          <a href="#artist-public-posts">Posts</a>
+          <a href="#artist-protected-portfolio">Portfolio</a>
+          <a href="#artist-reviews">Reviews</a>
+        </nav>
+
+        <aside className="artist-profile-sidebar" aria-label="Profile information">
+          <section className="artist-profile-about card ag-liquid-glass-soft">
+            <span className="section-title">About</span>
+            <p className="artist-profile-sidebar-bio">{profile.bio || 'No bio has been added yet.'}</p>
+          </section>
+          {profile.tags.length > 0 && (
+            <section className="artist-profile-sidebar-card card ag-liquid-glass-soft">
+              <span className="section-title">Specialties</span>
+              <div className="artist-profile-tags artist-profile-sidebar-tags">
+                {profile.tags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}
+              </div>
+            </section>
+          )}
+          {(profile.source === 'mock' || profile.source === 'supabase') && (
+            <section className="artist-profile-sidebar-card card ag-liquid-glass-soft">
+              <span className="section-title">Artist overview</span>
+              {profile.source === 'mock' ? (
+                <div className="artist-profile-overview-list">
+                  <span><strong>{profile.completed}</strong><small>Completed</small></span>
+                  <span><strong>{profile.responseTime}</strong><small>Response</small></span>
+                </div>
+              ) : reviewAverage !== null ? (
+                <div className="artist-profile-overview-rating">
+                  <Icon name="star" style={{ width: 15, height: 15, stroke: 'none', fill: 'var(--ag-amber)' }} />
+                  <strong>{reviewAverage.toFixed(1)}</strong>
+                  <span className="t-xs c-low">{artistReviews.length} reviews</span>
+                </div>
+              ) : (
+                <div className="t-xs c-low">No reviews yet.</div>
+              )}
+            </section>
+          )}
+          {isSelf && (
+            <button
+              type="button"
+              className="artist-profile-pro-card"
+              onClick={() => navigate('/profile/premium')}
+            >
+              <span className="artist-profile-pro-icon" aria-hidden="true">
+                <Icon name="crown" />
+              </span>
+              <span>
+                <strong>{user?.isPro ? 'ArtGuard Pro active' : 'Upgrade to Pro'}</strong>
+                <small>{user?.isPro ? 'Your mock Pro benefits are enabled' : '0% transaction fees, advanced shielding'}</small>
+              </span>
+              <Icon name="chevron-r" />
+            </button>
+          )}
+        </aside>
+
         {profile.source === 'mock' && <div className="row-between" style={{ marginBottom: 10 }}>
           <span className="section-title">Protected Portfolio</span>
           <Icon name="grid" style={{ width: 14, height: 14, stroke: 'var(--ag-text-low)' }} />
         </div>}
-        {profile.source === 'mock' && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 20 }}>
+        {profile.source === 'mock' && <div id="artist-protected-portfolio" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 20 }}>
           {profile.portfolio?.map((variant, i) => (
             <ArtTile key={i} variant={variant} style={{ aspectRatio: '1' }} />
           ))}
         </div>}
 
         {isSupabaseConfigured && (profile.source === 'supabase' || (isSelf && user?.role === 'artist')) && (
-          <section className="artist-public-posts" aria-labelledby="artist-public-posts-title">
+          <section className="artist-public-posts" id="artist-public-posts" aria-labelledby="artist-public-posts-title">
             <div className="row-between artist-public-posts-heading">
               <span id="artist-public-posts-title" className="section-title">Public Commission Posts</span>
               {isSelf && user?.role === 'artist' && profile.source === 'supabase' && (
@@ -1018,7 +1075,7 @@ export function ArtistProfilePage() {
           </section>
         )}
 
-        {profile.source === 'supabase' && <div style={{ marginBottom: 20 }}>
+        {profile.source === 'supabase' && <div id="artist-protected-portfolio" style={{ marginBottom: 20 }}>
           <div className="row-between" style={{ marginBottom: 10 }}>
             <span className="section-title">Protected Portfolio</span>
             <Icon name="grid" style={{ width: 14, height: 14, stroke: 'var(--ag-text-low)' }} />
@@ -1056,7 +1113,7 @@ export function ArtistProfilePage() {
         </div>}
 
         {profile.source === 'supabase' && (
-          <section style={{ marginBottom: 20 }} aria-labelledby="artist-reviews-title">
+          <section id="artist-reviews" style={{ marginBottom: 20 }} aria-labelledby="artist-reviews-title">
             <div className="row-between" style={{ marginBottom: 10 }}>
               <span id="artist-reviews-title" className="section-title">Reviews</span>
               {!reviewsLoading && !reviewsError && artistReviews.length > 3 && (
@@ -1374,45 +1431,6 @@ export function ArtistProfilePage() {
           ))}
         </div>}
 
-        {isSelf && (
-          <button
-            type="button"
-            className="tap-card card"
-            style={{
-              marginBottom: 20,
-              background: 'var(--ag-grad-primary)',
-              border: 'none',
-              boxShadow: '0 8px 20px rgba(201,147,42,0.35)',
-            }}
-            onClick={() => navigate('/profile/premium')}
-          >
-            <div className="row gap-10">
-              <div
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 12,
-                  background: 'rgba(22,33,59,0.14)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <Icon name="crown" style={{ width: 18, height: 18, stroke: 'var(--ag-ink)' }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="t-sm fw-700" style={{ color: 'var(--ag-ink)' }}>
-                  {user?.isPro ? 'ArtGuard Pro active' : 'Upgrade to Pro'}
-                </div>
-                <div className="t-xs" style={{ color: 'rgba(22,33,59,0.75)' }}>
-                  {user?.isPro ? 'Your mock Pro benefits are enabled' : '0% transaction fees, advanced shielding'}
-                </div>
-              </div>
-              <Icon name="chevron-r" style={{ width: 16, height: 16, stroke: 'var(--ag-ink)' }} />
-            </div>
-          </button>
-        )}
       </div>
       {toast}
       <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />

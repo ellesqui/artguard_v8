@@ -616,21 +616,26 @@ export function ClientProfilePage() {
           </div>
         }
       >
-        <div style={{ textAlign: 'center', paddingTop: 12, marginBottom: 22 }}>
-          <ProfileAvatar
-            className="avatar avatar-xl"
-            imageUrl={viewedClient.avatar_data_url}
-            initials={viewedClientInitials}
-            style={{ margin: '0 auto 12px', background: 'var(--ag-grad-accent)' }}
-          />
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{viewedClient.name}</div>
-          <div className="t-sm c-low" style={{ marginTop: 3 }}>@{viewedClient.username} · Client</div>
-          {viewedClient.id === user?.id ? (
-            <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={() => navigate('/profile/edit')}>
-              Edit Profile
-            </button>
-          ) : null}
-        </div>
+        <section className="client-profile-identity-card" aria-label="Client profile">
+          <div className="client-profile-banner" aria-hidden="true" />
+          <div className="client-profile-identity-body">
+            <ProfileAvatar
+              className="avatar avatar-xl client-profile-avatar"
+              imageUrl={viewedClient.avatar_data_url}
+              initials={viewedClientInitials}
+              style={{ background: 'var(--ag-grad-accent)' }}
+            />
+            <div className="client-profile-identity-copy">
+              <div className="client-profile-name">{viewedClient.name}</div>
+              <div className="t-sm c-low">@{viewedClient.username} · Client</div>
+              {viewedClient.id === user?.id ? (
+                <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
+                  Edit Profile
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
 
         {viewedClient.bio && (
           <div className="card" style={{ marginBottom: 16 }}>
@@ -844,27 +849,25 @@ export function ClientProfilePage() {
       }
       footer={<BottomNav active="profile" />}
     >
-      <div style={{ textAlign: 'center', marginBottom: 18 }}>
-        <ProfileAvatar
-          className="avatar avatar-xl"
-          imageUrl={user?.avatarDataUrl}
-          initials={initials}
-          style={{ margin: '0 auto 10px', background: 'var(--ag-grad-accent)' }}
-        />
-        <div style={{ fontSize: 19, fontWeight: 700 }}>{user?.name || 'Client'}</div>
-        <div className="t-xs c-low" style={{ marginBottom: 10 }}>
-          @{usernameFromEmail(user?.email)}
+      <section className="client-profile-identity-card" aria-label="Client profile">
+        <div className="client-profile-banner" aria-hidden="true" />
+        <div className="client-profile-identity-body">
+          <ProfileAvatar
+            className="avatar avatar-xl client-profile-avatar"
+            imageUrl={user?.avatarDataUrl}
+            initials={initials}
+            style={{ background: 'var(--ag-grad-accent)' }}
+          />
+          <div className="client-profile-identity-copy">
+            <div className="client-profile-name">{user?.name || 'Client'}</div>
+            <div className="t-xs c-low">@{usernameFromEmail(user?.email)} · Client</div>
+            {user?.bio && <p className="client-profile-bio">{user.bio}</p>}
+            <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
+              Edit Profile
+            </button>
+          </div>
         </div>
-        <button type="button" className="btn btn-ghost btn-sm" style={{ margin: '0 auto' }} onClick={() => navigate('/profile/edit')}>
-          Edit Profile
-        </button>
-      </div>
-
-      {user?.bio && (
-        <p className="t-xs c-mid card" style={{ lineHeight: 1.6, marginBottom: 20, padding: '12px 14px' }}>
-          {user.bio}
-        </p>
-      )}
+      </section>
 
       {isRealClient ? (
         <>
@@ -900,7 +903,7 @@ export function ClientProfilePage() {
               )}
             </div>
           </div>
-          <div className="row gap-10" role="tablist" aria-label="Commission request types" style={{ marginBottom: 14 }}>
+          <div className="row gap-10 client-profile-request-tabs" role="tablist" aria-label="Commission request types" style={{ marginBottom: 14 }}>
             <button type="button" className={`btn btn-sm ${realTab === 'direct' ? 'btn-primary' : 'btn-ghost'}`} role="tab" aria-selected={realTab === 'direct'} onClick={() => { setRealTab('direct'); resetPublicPostForm(); }}>
               Direct Requests
             </button>

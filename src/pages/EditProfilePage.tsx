@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { INTEREST_OPTIONS } from '../data/mockData';
 import { useMockToast } from '../components/ui/MockToast';
 import { validateRequired } from '../utils/validators';
+import './EditProfilePage.css';
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -97,7 +98,8 @@ export function EditProfilePage() {
         </div>
       }
     >
-      <form onSubmit={handleSave}>
+      <div className="edit-profile-page">
+      <form className="edit-profile-form" onSubmit={handleSave}>
         <input
           type="file"
           accept="image/png,image/jpeg"
@@ -105,11 +107,11 @@ export function EditProfilePage() {
           style={{ display: 'none' }}
           onChange={(e) => handlePhotoChange(e.target.files)}
         />
-        <div style={{ textAlign: 'center', marginBottom: 22 }}>
+        <section className="edit-profile-photo-card" aria-label="Profile photo">
+          <div className="edit-profile-photo-copy">
           <div
-            className="avatar avatar-xl"
+            className="avatar avatar-xl edit-profile-avatar"
             style={{
-              margin: '0 auto 10px',
               backgroundImage: avatarPreview ? `url(${avatarPreview})` : undefined,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
@@ -117,14 +119,17 @@ export function EditProfilePage() {
           >
             {!avatarPreview && initials}
           </div>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()}>
-            <Icon name="image" style={{ width: 14, height: 14 }} />
-            Change Photo
-          </button>
-          <p className="t-xs c-low" style={{ marginTop: 6 }}>
-            Stored on this device only — not uploaded anywhere yet.
-          </p>
-        </div>
+          </div>
+          <div className="edit-profile-photo-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()}>
+              <Icon name="image" style={{ width: 14, height: 14 }} />
+              Change Photo
+            </button>
+            <p className="t-xs c-low">
+              Stored on this device only — not uploaded anywhere yet.
+            </p>
+          </div>
+        </section>
 
         <label className="field-label" htmlFor="edit-name">
           Display name
@@ -218,6 +223,7 @@ export function EditProfilePage() {
           </div>
         )}
       </form>
+      </div>
       {toast}
     </ScreenShell>
   );
