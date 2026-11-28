@@ -451,64 +451,57 @@ function ProtectionPageContent() {
   return (
     <ScreenShell
       header={
-        <div className="px-hd">
-          <div className="row gap-10">
-            <Icon name="shield" style={{ stroke: 'var(--ag-accent)' }} />
-            <span className="h-title">Protection</span>
+        <div className="px-hd protection-page-header">
+          <div className="protection-header-copy">
+            <span className="protection-header-icon" aria-hidden="true">
+              <Icon name="shield" />
+            </span>
+            <div>
+              <span className="h-title protection-page-title">Protection</span>
+              <p>Private artwork protection and delivery controls</p>
+            </div>
           </div>
         </div>
       }
       footer={<BottomNav active="shield" />}
     >
-      <input
-        type="file"
-        accept="image/png,image/jpeg"
-        ref={fileInputRef}
-        style={{ display: 'none' }}
-        onChange={(e) => void handleFileChosen(e.target.files)}
-      />
-      <label className="artwork-category-field">
-        <span className="t-xs c-low">Artwork category</span>
-        <select
-          value={uploadCategory}
-          onChange={(event) => setUploadCategory(event.target.value as ArtworkCategory)}
-          disabled={uploading}
-        >
-          {ARTWORK_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
-        </select>
-      </label>
-      <button
-        type="button"
-        className="tap-card card ag-liquid-glass-soft"
-        style={{
-          border: '1.5px dashed var(--ag-border)',
-          textAlign: 'center',
-          padding: '26px 16px',
-          marginBottom: 18,
-        }}
-        disabled={uploading}
-        aria-busy={uploading}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: '50%',
-            background: 'var(--ag-surface-3)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 10px',
-          }}
-        >
-          <Icon name="upload" style={{ stroke: 'var(--ag-accent)' }} />
-        </div>
-        <div className="t-sm fw-700" style={{ marginBottom: 3 }}>
-          {uploading ? 'Uploading and protecting artwork…' : 'Drop artwork to shield'}
-        </div>
-        <div className="t-xs c-low">or tap to upload · JPG, PNG up to 40MB</div>
-      </button>
+      <div className="protection-page">
+        <input
+          type="file"
+          accept="image/png,image/jpeg"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={(e) => void handleFileChosen(e.target.files)}
+        />
+        <section className="protection-top-layout" aria-label="Upload artwork">
+          <label className="artwork-category-field protection-category-card card ag-liquid-glass-soft">
+            <span className="t-xs c-low protection-field-label">Artwork category</span>
+            <select
+              value={uploadCategory}
+              onChange={(event) => setUploadCategory(event.target.value as ArtworkCategory)}
+              disabled={uploading}
+            >
+              {ARTWORK_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="tap-card card ag-liquid-glass-soft protection-upload-card"
+            disabled={uploading}
+            aria-busy={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <div className="protection-upload-icon">
+              <Icon name="upload" style={{ stroke: 'var(--ag-accent)' }} />
+            </div>
+            <div className="protection-upload-copy">
+              <div className="t-sm fw-700">
+                {uploading ? 'Uploading and protecting artwork…' : 'Drop artwork to shield'}
+              </div>
+              <div className="t-xs c-low">or tap to upload · JPG, PNG up to 40MB</div>
+            </div>
+          </button>
+        </section>
       {uploadError && (
         <div className="card t-xs" role="alert" style={{ marginBottom: 18, color: 'var(--ag-danger)', borderColor: 'rgba(248,113,113,0.3)' }}>
           {uploadError}
@@ -533,8 +526,14 @@ function ProtectionPageContent() {
         </div>
       )}
       {!artworksLoading && !artworksError && artworks.length === 0 && (
-        <div className="card t-sm c-mid protection-artwork-state">
-          Your uploaded artwork will appear here after it is stored privately.
+        <div className="protection-artwork-empty">
+          <span className="protection-artwork-empty-icon" aria-hidden="true">
+            <Icon name="image" />
+          </span>
+          <div>
+            <strong>No protected artworks yet</strong>
+            <p>Upload artwork above to create your private protected gallery.</p>
+          </div>
         </div>
       )}
       {!artworksLoading && !artworksError && artworks.length > 0 && (
@@ -701,105 +700,131 @@ function ProtectionPageContent() {
         </div>
       )}
 
-      <div className="row-between" style={{ marginBottom: 12 }}>
-        <span className="section-title">Shield Settings</span>
-      </div>
-      {artworks.length > 0 && (
-        <label className="t-xs c-low" style={{ display: 'block', marginBottom: 10 }}>
-          Artwork
-          <select
-            value={activeArtworkId ?? ''}
-            onChange={(event) => handleActiveArtworkChange(event.target.value)}
-            disabled={settingsLoading || settingsSaving || Boolean(processingArtworkId)}
-            style={{ display: 'block', width: '100%', marginTop: 6, padding: '9px 10px', color: 'var(--ag-text-hi)', background: 'var(--ag-surface-2)', border: '1px solid var(--ag-border)', borderRadius: 'var(--ag-r-sm)' }}
-          >
-            {artworks.map((artwork) => <option value={artwork.id} key={artwork.id}>{artwork.title}</option>)}
-          </select>
-        </label>
-      )}
-      {settingsLoading && <div className="t-xs c-low" role="status" style={{ marginBottom: 10 }}>Loading saved shield settings…</div>}
-      {settingsError && <div className="card t-xs protection-artwork-error" role="alert" style={{ marginBottom: 10 }}>{settingsError}</div>}
-      {artworks.length === 0 && <div className="t-xs c-low" style={{ marginBottom: 10 }}>Upload an artwork to configure its protection settings.</div>}
-      {SETTINGS.map((setting, i) => (
-        <div className="card" key={setting.key} style={{ marginBottom: i === SETTINGS.length - 1 ? 10 : 10, padding: '14px 16px' }}>
-          <div className="row-between">
-            <div className="row gap-10">
-              <Icon name={setting.icon} style={{ width: 17, height: 17, stroke: 'var(--ag-accent)' }} />
-              <div>
-                <div className="t-sm fw-600">{setting.title}</div>
-                <div className="t-xs c-low">{setting.subtitle}</div>
+      <section className="protection-settings-card" aria-labelledby="protection-settings-title">
+        <div className="protection-settings-header">
+          <div>
+            <h2 className="section-title" id="protection-settings-title">Shield Settings</h2>
+            <p>Fine-tune the protections applied to the selected artwork.</p>
+          </div>
+          {artworks.length > 0 && (
+            <label className="protection-artwork-selector t-xs c-low">
+              <span>Artwork</span>
+              <select
+                value={activeArtworkId ?? ''}
+                onChange={(event) => handleActiveArtworkChange(event.target.value)}
+                disabled={settingsLoading || settingsSaving || Boolean(processingArtworkId)}
+              >
+                {artworks.map((artwork) => <option value={artwork.id} key={artwork.id}>{artwork.title}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        {settingsLoading && <div className="t-xs c-low protection-settings-status" role="status">Loading saved shield settings…</div>}
+        {settingsError && <div className="t-xs protection-artwork-error protection-settings-status" role="alert">{settingsError}</div>}
+        {artworks.length === 0 && <div className="t-xs c-low protection-settings-status">Upload an artwork to configure its protection settings.</div>}
+        <div className="protection-settings-list">
+          {SETTINGS.map((setting) => (
+            <div className="protection-setting-row" key={setting.key}>
+              <div className="protection-setting-copy">
+                <span className="protection-setting-icon" aria-hidden="true">
+                  <Icon name={setting.icon} />
+                </span>
+                <div className="protection-setting-text">
+                  <div className="t-sm fw-600">{setting.title}</div>
+                  <div className="t-xs c-low">{setting.subtitle}</div>
+                </div>
               </div>
+              <ToggleSwitch
+                checked={toggles[setting.key]}
+                onChange={(checked) => void handleToggleChange(setting.key, checked)}
+                ariaLabel={setting.title}
+              />
             </div>
-            <ToggleSwitch
-              checked={toggles[setting.key]}
-              onChange={(checked) => void handleToggleChange(setting.key, checked)}
-              ariaLabel={setting.title}
-            />
-          </div>
+          ))}
         </div>
-      ))}
+      </section>
 
-      <div className="row-between" style={{ margin: '10px 0' }}>
-        <span className="section-title">Protection Level</span>
-      </div>
-      <div style={{ marginBottom: 20 }}>
-        <SegmentedControl
-          ariaLabel="Protection level"
-          value={level}
-          onChange={(nextLevel: ProtectionLevel) => void handleProtectionLevelChange(nextLevel)}
-          options={[
-            { value: 'standard', label: 'Standard' },
-            { value: 'enhanced', label: 'Enhanced' },
-            { value: 'maximum', label: 'Maximum' },
-          ]}
-        />
-      </div>
+      <section className="protection-level-panel" aria-labelledby="protection-level-title">
+        <div className="protection-level-copy">
+          <span className="section-title" id="protection-level-title">Protection Level</span>
+          <p>Choose how strongly the selected artwork is protected.</p>
+        </div>
+        <div className="protection-level-control">
+          <SegmentedControl
+            ariaLabel="Protection level"
+            value={level}
+            onChange={(nextLevel: ProtectionLevel) => void handleProtectionLevelChange(nextLevel)}
+            options={[
+              { value: 'standard', label: 'Standard' },
+              { value: 'enhanced', label: 'Enhanced' },
+              { value: 'maximum', label: 'Maximum' },
+            ]}
+          />
+        </div>
+      </section>
 
-      <div className="row-between" style={{ marginBottom: 10 }}>
-        <span className="section-title">Security Snapshot</span>
-      </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        <div className="card" style={{ flex: 1, padding: 12, textAlign: 'center' }}>
-          <div className="mono fw-700" style={{ fontSize: 17, color: 'var(--ag-danger)' }}>
-            {blockedToday}
+      <div className="protection-lower-layout">
+        <section className="protection-snapshot" aria-labelledby="protection-snapshot-title">
+          <div className="row-between protection-section-heading">
+            <span className="section-title" id="protection-snapshot-title">Security Snapshot</span>
           </div>
-          <div className="t-xs c-low">Blocked today</div>
-        </div>
-        <div className="card" style={{ flex: 1, padding: 12, textAlign: 'center' }}>
-          <div className="mono fw-700" style={{ fontSize: 17 }}>
-            {protectedWorks}
-          </div>
-          <div className="t-xs c-low">Protected works</div>
-        </div>
-        <div className="card" style={{ flex: 1, padding: 12, textAlign: 'center' }}>
-          <div className="mono fw-700" style={{ fontSize: 17, color: 'var(--ag-success)' }}>
-            {scanHealthLabel}
-          </div>
-          <div className="t-xs c-low">Scan health</div>
-        </div>
-      </div>
-
-      <div className="section-title" style={{ marginBottom: 10 }}>
-        Recent Scan Log
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 6 }}>
-        {eventsLoading && <div className="t-xs c-low" role="status">Loading recent protection events…</div>}
-        {!eventsLoading && eventsError && <div className="t-xs protection-artwork-error" role="alert">{eventsError}</div>}
-        {!eventsLoading && !eventsError && events.length === 0 && <div className="t-xs c-low">No protection events have been recorded yet.</div>}
-        {!eventsLoading && !eventsError && events.map((entry) => (
-          <div className="row gap-10" key={entry.id}>
-            <Icon
-              name={entry.event_type === 'blocked' || entry.event_type === 'protection_processing_failed' ? 'alert' : 'check-circle'}
-              style={{ width: 15, height: 15, stroke: entry.event_type === 'blocked' || entry.event_type === 'protection_processing_failed' ? 'var(--ag-danger)' : 'var(--ag-success)' }}
-            />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="t-xs c-hi fw-600">{eventLabel(entry)}</div>
-              <div className="t-xs c-low">{artworks.find((artwork) => artwork.id === entry.artwork_id)?.title ?? 'Artwork'} · {formatEventDate(entry.created_at)}</div>
+          <div className="protection-snapshot-grid">
+            <div className="card protection-snapshot-card">
+              <div className="mono fw-700 protection-snapshot-danger">
+                {blockedToday}
+              </div>
+              <div className="t-xs c-low">Blocked today</div>
+            </div>
+            <div className="card protection-snapshot-card">
+              <div className="mono fw-700">
+                {protectedWorks}
+              </div>
+              <div className="t-xs c-low">Protected works</div>
+            </div>
+            <div className="card protection-snapshot-card">
+              <div className="mono fw-700 protection-snapshot-success">
+                {scanHealthLabel}
+              </div>
+              <div className="t-xs c-low">Scan health</div>
             </div>
           </div>
-        ))}
+        </section>
+
+        <section className="protection-scan-log" aria-labelledby="protection-scan-log-title">
+          <div className="section-title protection-section-heading" id="protection-scan-log-title">
+            Recent Scan Log
+          </div>
+          <div className="protection-scan-log-list">
+            {eventsLoading && <div className="t-xs c-low" role="status">Loading recent protection events…</div>}
+            {!eventsLoading && eventsError && <div className="t-xs protection-artwork-error" role="alert">{eventsError}</div>}
+            {!eventsLoading && !eventsError && events.length === 0 && (
+              <div className="protection-scan-empty">
+                <span className="protection-scan-empty-icon" aria-hidden="true">
+                  <Icon name="check-circle" />
+                </span>
+                <div>
+                  <strong>No recent activity</strong>
+                  <p>Protection events will appear here as artwork is processed.</p>
+                </div>
+              </div>
+            )}
+            {!eventsLoading && !eventsError && events.map((entry) => (
+              <div className="protection-scan-log-row" key={entry.id}>
+                <Icon
+                  name={entry.event_type === 'blocked' || entry.event_type === 'protection_processing_failed' ? 'alert' : 'check-circle'}
+                  style={{ width: 15, height: 15, stroke: entry.event_type === 'blocked' || entry.event_type === 'protection_processing_failed' ? 'var(--ag-danger)' : 'var(--ag-success)' }}
+                />
+                <div className="protection-scan-log-copy">
+                  <div className="t-xs c-hi fw-600">{eventLabel(entry)}</div>
+                  <div className="t-xs c-low">{artworks.find((artwork) => artwork.id === entry.artwork_id)?.title ?? 'Artwork'} · {formatEventDate(entry.created_at)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
       {toast}
+      </div>
     </ScreenShell>
   );
 }
