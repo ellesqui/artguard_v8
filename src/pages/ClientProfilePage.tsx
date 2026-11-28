@@ -20,8 +20,15 @@ import type { CommissionRequest } from '../data/mockData';
 import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, usernameFromEmail } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { validateCoverPhotoFile } from '../lib/profileCoverPhoto';
+import {
+  createProfileCoverSignedUrl,
+  deleteProfileCoverObject,
+  uploadProfileCoverObject,
+} from '../lib/supabaseProfileCovers';
 import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import './MarketplacePage.css';
+import './ProfileCover.css';
 import './ClientProfilePage.css';
 import { listMyCommissions, type MyCommission } from '../lib/supabaseRevisions';
 import {
@@ -95,11 +102,18 @@ function formatCommissionAmount(commission: MyCommission): string | null {
 export function ClientProfilePage() {
   const { clientId } = useParams<{ clientId?: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, updateProfileCoverImagePath } = useAuth();
   const { startConversation } = useChat();
   const { toast, showToast } = useMockToast();
   const isRealClient = !clientId && isSupabaseConfigured && user?.role === 'client';
   const [viewedClient, setViewedClient] = useState<Awaited<ReturnType<typeof getPublicProfile>>>(null);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+  const [coverDraft, setCoverDraft] = useState<{ file: File; previewUrl: string }>();
+  const [savedCoverUrl, setSavedCoverUrl] = useState<string>();
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [coverError, setCoverError] = useState<string>();
+  const [coverLoadError, setCoverLoadError] = useState<string>();
+  const [loadedCoverUrl, setLoadedCoverUrl] = useState<string>();
   const [viewedClientPosts, setViewedClientPosts] = useState<CommissionPost[]>([]);
   const [viewedClientPostEngagement, setViewedClientPostEngagement] = useState<Record<string, CommissionPostEngagementSummary>>({});
   const [viewedClientPostEngagementError, setViewedClientPostEngagementError] = useState(false);
@@ -116,6 +130,47 @@ export function ClientProfilePage() {
   const [viewedClientPostApplicationMessage, setViewedClientPostApplicationMessage] = useState('');
   const [viewedClientPostApplicationError, setViewedClientPostApplicationError] = useState<string | null>(null);
   const [viewedClientPostApplicationSaving, setViewedClientPostApplicationSaving] = useState(false);
+  const coverImagePath = clientId
+    ? viewedClient?.cover_image_path
+    : isRealClient
+      ? user?.coverImagePath
+      : undefined;
+  const canChangeCover = isSupabaseConfigured
+    && user?.role === 'client'
+    && (clientId ? viewedClient?.id === user.id : isRealClient);
+  const coverUrl = (canChangeCover ? coverDraft?.previewUrl : undefined) ?? savedCoverUrl ?? null;
+
+  useEffect(() => {
+    if (!coverDraft) return;
+    return () => URL.revokeObjectURL(coverDraft.previewUrl);
+  }, [coverDraft]);
+
+  useEffect(() => {
+    if (!coverImagePath || !isSupabaseConfigured) {
+      setSavedCoverUrl(undefined);
+      setCoverLoadError(undefined);
+      return;
+    }
+
+    let active = true;
+    setSavedCoverUrl(undefined);
+    setCoverLoadError(undefined);
+    void createProfileCoverSignedUrl(coverImagePath)
+      .then((url) => {
+        if (active) {
+          setSavedCoverUrl(url);
+          setCoverLoadError(undefined);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error('ArtGuard: client cover photo could not be loaded.', error);
+        setCoverLoadError('Cover photo could not be loaded.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [coverImagePath]);
 
   const [requests, setRequests] = useState<CommissionRequest[]>(CLIENT_COMMISSION_REQUESTS);
   const [composing, setComposing] = useState(false);
@@ -175,7 +230,7 @@ export function ClientProfilePage() {
     setViewedClientPostEngagementError(false);
     setViewedClientLoading(true);
     setViewedClientError(undefined);
-    void Promise.all([getPublicProfile(clientId), listOpenCommissionPosts()])
+    void Promise.all([getPublicProfile(clientId, true), listOpenCommissionPosts()])
       .then(async ([profile, posts]) => {
         if (!active) return;
         if (!profile || profile.role !== 'client') {
@@ -207,6 +262,121 @@ export function ClientProfilePage() {
       });
     return () => { active = false; };
   }, [clientId]);
+
+  const handleCoverPhotoSelection = (file?: File) => {
+    if (!file) return;
+    setCoverError(undefined);
+    try {
+      validateCoverPhotoFile(file);
+      setCoverDraft({ file, previewUrl: URL.createObjectURL(file) });
+      setLoadedCoverUrl(undefined);
+    } catch (error) {
+      setCoverError(error instanceof Error ? error.message : 'Could not preview that cover photo.');
+    }
+  };
+
+  const saveCoverPhoto = async () => {
+    if (!coverDraft || !user || !canChangeCover || coverSaving) return;
+    setCoverSaving(true);
+    setCoverError(undefined);
+    let uploadedPath: string | undefined;
+    let profileUpdated = false;
+    const previousPath = coverImagePath ?? user.coverImagePath;
+    try {
+      uploadedPath = await uploadProfileCoverObject(user.id, coverDraft.file);
+      const result = await updateProfileCoverImagePath(uploadedPath);
+      if (!result.success) {
+        throw new Error(result.error ?? 'Could not save your cover photo.');
+      }
+      profileUpdated = true;
+      setViewedClient((current) => current?.id === user.id
+        ? { ...current, cover_image_path: uploadedPath }
+        : current);
+      const signedUrl = await createProfileCoverSignedUrl(uploadedPath);
+      setSavedCoverUrl(signedUrl);
+      setLoadedCoverUrl(undefined);
+      setCoverDraft(undefined);
+      if (previousPath && previousPath !== uploadedPath) {
+        try {
+          await deleteProfileCoverObject(previousPath, user.id);
+          showToast('Cover photo updated');
+        } catch (cleanupError) {
+          console.error('ArtGuard: previous client cover could not be removed.', cleanupError);
+          showToast('Cover updated, but the previous image could not be removed.');
+        }
+      } else {
+        showToast('Cover photo updated');
+      }
+    } catch (error) {
+      if (uploadedPath && !profileUpdated) {
+        try {
+          await deleteProfileCoverObject(uploadedPath, user.id);
+        } catch (cleanupError) {
+          console.error('ArtGuard: unsaved client cover could not be removed.', cleanupError);
+        }
+      }
+      setCoverError(error instanceof Error ? error.message : 'Could not save your cover photo.');
+    } finally {
+      setCoverSaving(false);
+    }
+  };
+
+  const coverBanner = (
+    <div className="client-profile-banner profile-cover-banner" aria-label="Client cover photo">
+      {coverUrl && (
+        <img
+          key={coverUrl}
+          className={`profile-cover-image${loadedCoverUrl === coverUrl ? ' is-loaded' : ''}`}
+          src={coverUrl}
+          alt=""
+          onLoad={() => {
+            setLoadedCoverUrl(coverUrl);
+            setCoverLoadError(undefined);
+          }}
+          onError={() => setCoverLoadError('Cover photo could not be loaded.')}
+        />
+      )}
+      {coverLoadError && <div className="profile-cover-load-error" role="status">{coverLoadError}</div>}
+      {canChangeCover && (
+        <>
+          <input
+            ref={coverFileInputRef}
+            className="profile-cover-file-input"
+            type="file"
+            accept="image/png,image/jpeg"
+            aria-label="Select cover photo"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              handleCoverPhotoSelection(file);
+            }}
+          />
+          <div className="profile-cover-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
+              <Icon name="image" />
+              {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
+            </button>
+            {coverDraft && (
+              <>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto()} disabled={coverSaving}>
+                  {coverSaving ? 'Saving…' : 'Save Cover'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
+                  disabled={coverSaving}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+          {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
+        </>
+      )}
+    </div>
+  );
 
   const initials = (user?.name || 'C').slice(0, 1).toUpperCase();
   const visiblePublicPosts = publicPosts.filter(
@@ -618,6 +788,7 @@ export function ClientProfilePage() {
         }
       >
         <section className="client-profile-identity-card" aria-label="Client profile">
+          {coverBanner}
           <div className="client-profile-identity-body">
             <ProfileAvatar
               className="avatar avatar-xl client-profile-avatar"
@@ -843,6 +1014,7 @@ export function ClientProfilePage() {
       footer={<BottomNav active="profile" />}
     >
       <section className="client-profile-identity-card" aria-label="Client profile">
+        {coverBanner}
         <div className="client-profile-identity-body">
           <ProfileAvatar
             className="avatar avatar-xl client-profile-avatar"

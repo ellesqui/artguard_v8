@@ -266,16 +266,16 @@ export async function ensureMyProfile(profile: {
   return created;
 }
 
-export async function getPublicProfile(userId: string, includeArtistCover = false): Promise<PublicProfile | null> {
+export async function getPublicProfile(userId: string, includeProfileCover = false): Promise<PublicProfile | null> {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('profiles')
-    .select(includeArtistCover ? `${PUBLIC_PROFILE_COLUMNS},cover_image_path` : PUBLIC_PROFILE_COLUMNS)
+    .select(includeProfileCover ? `${PUBLIC_PROFILE_COLUMNS},cover_image_path` : PUBLIC_PROFILE_COLUMNS)
     .eq('id', userId)
     .maybeSingle();
   if (!error) return data as PublicProfile | null;
 
-  const coverColumnUnavailable = includeArtistCover
+  const coverColumnUnavailable = includeProfileCover
     && (error.code === '42703' || error.code === 'PGRST204')
     && error.message.toLowerCase().includes('cover_image_path');
   if (!coverColumnUnavailable) throw error;

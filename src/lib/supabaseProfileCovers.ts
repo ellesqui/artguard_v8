@@ -3,10 +3,10 @@ import { validateCoverPhotoFile } from './profileCoverPhoto';
 
 const PROFILE_COVERS_BUCKET = 'profile-covers';
 const PROFILE_COVER_PATH_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cover\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$/i;
 
 function assertProfileCoverPath(path: string, ownerId?: string): void {
-  if (!PROFILE_COVER_PATH_PATTERN.test(path) || (ownerId && !path.startsWith(`${ownerId}/`))) {
+  if (!PROFILE_COVER_PATH_PATTERN.test(path) || (ownerId && path.split('/')[0] !== ownerId)) {
     throw new Error('Invalid profile cover image path.');
   }
 }
@@ -17,7 +17,7 @@ export async function uploadProfileCoverObject(ownerId: string, file: File): Pro
   if (!/^[0-9a-f-]{36}$/i.test(ownerId)) throw new Error('Invalid profile owner.');
 
   const extension = file.type === 'image/png' ? 'png' : 'jpg';
-  const path = `${ownerId}/${crypto.randomUUID()}.${extension}`;
+  const path = `${ownerId}/cover/${crypto.randomUUID()}.${extension}`;
   const { error } = await supabase.storage.from(PROFILE_COVERS_BUCKET).upload(path, file, {
     cacheControl: '3600',
     contentType: file.type,

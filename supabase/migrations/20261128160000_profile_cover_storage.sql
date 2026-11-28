@@ -1,5 +1,5 @@
--- Artist-only profile covers use private Storage objects; profile rows keep only
--- the object path. Apply locally for review before any deployment.
+-- Artist and Client profile covers use private Storage objects; profile rows
+-- keep only the object path. Apply locally for review before any deployment.
 
 begin;
 
@@ -19,7 +19,7 @@ begin
       check (
         cover_image_path is null
         or cover_image_path ~* (
-          '^' || id::text || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$'
+          '^' || id::text || '/cover/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$'
         )
       );
   end if;
@@ -38,24 +38,27 @@ set public = false,
     allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "profile owners can upload artist covers" on storage.objects;
-create policy "profile owners can upload artist covers"
+drop policy if exists "profile owners can upload covers" on storage.objects;
+create policy "profile owners can upload covers"
 on storage.objects for insert
 to authenticated
 with check (
   bucket_id = 'profile-covers'
-  and array_length(storage.foldername(name), 1) = 1
+  and array_length(storage.foldername(name), 1) = 2
   and (storage.foldername(name))[1] = auth.uid()::text
-  and name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$'
+  and (storage.foldername(name))[2] = 'cover'
+  and name ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/cover/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png)$'
   and exists (
     select 1
     from public.profiles p
     where p.id = auth.uid()
-      and p.role = 'artist'
+      and p.role in ('artist', 'client')
   )
 );
 
 drop policy if exists "authenticated users can read referenced artist covers" on storage.objects;
-create policy "authenticated users can read referenced artist covers"
+drop policy if exists "authenticated users can read referenced profile covers" on storage.objects;
+create policy "authenticated users can read referenced profile covers"
 on storage.objects for select
 to authenticated
 using (
@@ -64,7 +67,7 @@ using (
     select 1
     from public.profiles p
     where p.cover_image_path = storage.objects.name
-      and p.role = 'artist'
+      and p.role in ('artist', 'client')
   )
 );
 
@@ -74,8 +77,15 @@ on storage.objects for delete
 to authenticated
 using (
   bucket_id = 'profile-covers'
-  and array_length(storage.foldername(name), 1) = 1
+  and array_length(storage.foldername(name), 1) = 2
   and (storage.foldername(name))[1] = auth.uid()::text
+  and (storage.foldername(name))[2] = 'cover'
+  and exists (
+    select 1
+    from public.profiles p
+    where p.id = auth.uid()
+      and p.role in ('artist', 'client')
+  )
 );
 
 drop policy if exists artguard_active_account_storage_access on storage.objects;

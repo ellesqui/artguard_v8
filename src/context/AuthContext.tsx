@@ -1546,8 +1546,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateProfileCoverImagePath = useCallback(async (path: string) => {
     if (!user) return { success: false, error: 'Not signed in.' };
-    if (user.role !== 'artist' || !path.startsWith(`${user.id}/`)) {
-      return { success: false, error: 'Only the profile owner can save an artist cover photo.' };
+    if ((user.role !== 'artist' && user.role !== 'client') || !path.startsWith(`${user.id}/cover/`)) {
+      return { success: false, error: 'Only the profile owner can save their cover photo.' };
     }
     if (!isSupabaseConfigured || !supabase) {
       return { success: false, error: 'Cover photos require a connected profile.' };
@@ -1559,7 +1559,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select('id')
       .maybeSingle();
     if (error) return { success: false, error: error.message };
-    if (!data) return { success: false, error: 'Artist profile could not be updated.' };
+    if (!data) return { success: false, error: 'Profile could not be updated.' };
     persistSession({ ...user, coverImagePath: path });
     return { success: true };
   }, [persistSession, user]);

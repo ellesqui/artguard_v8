@@ -4,11 +4,12 @@
 }
 
 .client-profile-identity-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   margin-bottom: 20px;
-  padding: 24px 18px 20px;
+  padding: 0 18px 20px;
   border: 1px solid var(--ag-border-soft);
   border-radius: 18px;
   background: var(--ag-surface);
@@ -16,12 +17,21 @@
   box-sizing: border-box;
 }
 
+.client-profile-banner {
+  flex: 0 0 auto;
+  width: calc(100% + 36px);
+  margin-left: -18px;
+}
+
 .client-profile-identity-body {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
   min-width: 0;
+  margin-top: -36px;
   gap: 4px;
   box-sizing: border-box;
   text-align: center;

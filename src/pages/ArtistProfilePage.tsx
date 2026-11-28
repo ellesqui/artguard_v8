@@ -52,6 +52,7 @@ import {
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
 import { ProfileAvatar } from '../components/ui/ProfileAvatar';
 import './MarketplacePage.css';
+import './ProfileCover.css';
 import './ArtistProfilePage.css';
 
 interface ArtistProfileView {
@@ -877,7 +878,7 @@ export function ArtistProfilePage() {
       <div className="app-content-inner artist-profile-content">
         <section className="artist-profile-header" aria-label="Artist profile">
           {profileHeaderControls}
-          <div className="artist-profile-banner" aria-hidden="true">
+          <div className="artist-profile-banner profile-cover-banner">
             {coverUrl && (
               <img
                 key={coverUrl}
@@ -891,7 +892,7 @@ export function ArtistProfilePage() {
                 onError={() => setCoverLoadError('Cover photo could not be loaded.')}
               />
             )}
-            {coverLoadError && <div className="artist-profile-cover-load-error" role="status">{coverLoadError}</div>}
+            {coverLoadError && <div className="profile-cover-load-error" role="status">{coverLoadError}</div>}
           </div>
           {canChangeCover && (
             <>
