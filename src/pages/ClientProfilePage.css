@@ -3,6 +3,24 @@
   font-weight: 600;
 }
 
+.client-profile-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+  align-items: start;
+}
+
+.client-profile-main {
+  min-width: 0;
+}
+
+.client-profile-sidebar {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  align-self: start;
+}
+
 .client-profile-identity-card {
   position: relative;
   display: flex;
@@ -247,6 +265,16 @@
   .client-profile-identity-card {
     padding: 0 16px 20px;
     border-radius: 0 0 16px 16px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .client-profile-columns {
+    display: block;
+  }
+
+  .client-profile-sidebar {
+    margin-top: 20px;
   }
 }
 

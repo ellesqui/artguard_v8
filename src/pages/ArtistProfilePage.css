@@ -6,8 +6,14 @@
 .artist-profile-layout-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-areas: "main sidebar";
   gap: 22px;
   align-items: start;
+}
+
+.artist-profile-main {
+  grid-area: main;
+  min-width: 0;
 }
 
 .artist-profile-header {
@@ -180,31 +186,16 @@
 }
 
 .artist-profile-sidebar {
-  grid-column: 2;
-  grid-row: 2 / span 4;
+  grid-area: sidebar;
   display: grid;
   gap: 12px;
   min-width: 0;
   align-self: start;
 }
 
-.artist-profile-sidebar-card,
-.artist-profile-about {
-  min-width: 0;
+.artist-profile-overview-card {
   padding: 16px;
   border-radius: 16px;
-}
-
-.artist-profile-sidebar-bio {
-  margin: 8px 0 0;
-  color: var(--ag-text-mid);
-  font-size: 12.5px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.artist-profile-sidebar-tags {
-  margin-top: 10px;
 }
 
 .artist-profile-overview-list {
@@ -231,49 +222,156 @@
   margin-top: 10px;
 }
 
-.artist-profile-pro-card {
-  min-height: 78px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 16px;
+.artist-profile-overview-rating > .icon {
+  width: 15px;
+  height: 15px;
+  stroke: none;
+  fill: var(--ag-amber);
+}
+
+.artist-profile-reviews-trigger {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid rgba(246, 196, 83, 0.28);
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(246, 196, 83, 0.16), rgba(246, 196, 83, 0.04));
-  color: var(--ag-text-hi);
-  text-align: left;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ag-accent);
   font: inherit;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
-  box-sizing: border-box;
 }
 
-.artist-profile-pro-card strong,
-.artist-profile-pro-card small {
-  display: block;
+.artist-profile-reviews-trigger .icon {
+  width: 14px;
+  height: 14px;
 }
 
-.artist-profile-pro-card small {
-  margin-top: 3px;
-  color: var(--ag-text-mid);
-  line-height: 1.35;
+.artist-profile-reviews-trigger:focus-visible,
+.artist-review-filters button:focus-visible {
+  outline: 2px solid var(--ag-accent);
+  outline-offset: 3px;
 }
 
-.artist-profile-pro-icon {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
+.artist-reviews-backdrop {
+  z-index: 35;
+}
+
+.artist-reviews-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 680px);
+  max-height: calc(100dvh - 40px - var(--ag-bottom-nav-space, 0px));
+  overflow: hidden;
+  padding: 20px;
+}
+
+.artist-reviews-dialog-header {
+  flex: 0 0 auto;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.artist-reviews-dialog-header .section-title {
+  margin: 0;
+}
+
+.artist-review-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
   border-radius: 12px;
-  background: rgba(246, 196, 83, 0.14);
+  background: var(--ag-surface-2);
 }
 
-.artist-profile-pro-icon .icon,
-.artist-profile-pro-card > .icon {
-  width: 17px;
-  height: 17px;
-  stroke: var(--ag-accent);
+.artist-review-summary > strong {
+  color: var(--ag-text-hi);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.artist-review-summary-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.artist-review-summary-stars .icon {
+  width: 14px;
+  height: 14px;
+  stroke: none;
+  fill: var(--ag-amber);
+}
+
+.artist-review-distribution {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.artist-review-distribution-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 8px;
+  color: var(--ag-text-mid);
+  font-size: 11px;
+}
+
+.artist-review-distribution-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--ag-border-soft);
+}
+
+.artist-review-distribution-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ag-amber);
+}
+
+.artist-review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.artist-review-filters button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--ag-border-soft);
+  border-radius: 999px;
+  background: var(--ag-surface-2);
+  color: var(--ag-text-mid);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.artist-review-filters button.is-active {
+  border-color: var(--ag-accent);
+  background: color-mix(in srgb, var(--ag-accent) 14%, var(--ag-surface));
+  color: var(--ag-text-hi);
+}
+
+.artist-reviews-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1px 4px 1px 1px;
+}
+
+.artist-reviews-empty {
+  padding: 18px 4px;
 }
 
 .artist-public-posts {
@@ -302,13 +400,7 @@
   text-align: center;
 }
 
-.artist-profile-layout-content > [id="artist-protected-portfolio"] {
-  grid-column: 1;
-  scroll-margin-top: 12px;
-}
-
-.artist-profile-layout-content > [id="artist-reviews"] {
-  grid-column: 1;
+.artist-profile-main > [id="artist-protected-portfolio"] {
   scroll-margin-top: 12px;
 }
 
@@ -343,8 +435,12 @@
     display: block;
   }
 
+  .artist-profile-main {
+    display: block;
+  }
+
   .artist-profile-sidebar {
-    display: none;
+    margin-top: 20px;
   }
 
   .artist-profile-mobile-tabs {
@@ -459,5 +555,11 @@
 
   .artist-profile-actions .btn {
     flex: 1 1 140px;
+  }
+
+  .artist-reviews-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 24px - var(--ag-bottom-nav-space, 0px));
+    padding: 16px;
   }
 }

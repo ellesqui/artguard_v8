@@ -191,27 +191,23 @@ export function EditProfilePage() {
           style={{ marginBottom: 20 }}
         />
 
-        {isArtist && (
-          <>
-            <label className="field-label">Interests</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 22 }}>
-              {INTEREST_OPTIONS.map((interest) => {
-                const active = interests.includes(interest);
-                return (
-                  <button
-                    key={interest}
-                    type="button"
-                    className={`chip${active ? ' chip-active' : ''}`}
-                    aria-pressed={active}
-                    onClick={() => toggleInterest(interest)}
-                  >
-                    {interest}
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
+        <label className="field-label">Interests</label>
+        <div role="group" aria-label="Interests" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 22 }}>
+          {INTEREST_OPTIONS.map((interest) => {
+            const active = interests.includes(interest);
+            return (
+              <button
+                key={interest}
+                type="button"
+                className={`chip${active ? ' chip-active' : ''}`}
+                aria-pressed={active}
+                onClick={() => toggleInterest(interest)}
+              >
+                {interest}
+              </button>
+            );
+          })}
+        </div>
 
         <AuthButton type="submit" loading={saving} style={{ marginBottom: 10 }}>
           Save Changes

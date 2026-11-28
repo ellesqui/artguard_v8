@@ -5,6 +5,7 @@ import { ScreenShell } from '../components/ui/ScreenShell';
 import { BottomNav } from '../components/ui/BottomNav';
 import { IconButton } from '../components/ui/IconButton';
 import { ProfileAvatar } from '../components/ui/ProfileAvatar';
+import { ProfileTagsCard, ProfileUpgradeCard } from '../components/ProfileSidebarCards';
 import { Icon } from '../assets/icons';
 import {
   CommissionPostForm,
@@ -1061,6 +1062,8 @@ export function ClientProfilePage() {
       </div>
 
       <div className="client-profile-body">
+      <div className="client-profile-columns">
+      <main className="client-profile-main">
       {isRealClient ? (
         <>
           <div className="client-profile-request-heading">
@@ -1341,6 +1344,16 @@ export function ClientProfilePage() {
           </div>
         </>
       )}
+      </main>
+      <aside className="client-profile-sidebar" aria-label="Profile information">
+        <ProfileTagsCard
+          title="Interests"
+          tags={user?.interests ?? []}
+          emptyMessage="No interests have been added yet."
+        />
+        <ProfileUpgradeCard isPro={Boolean(user?.isPro)} onClick={() => navigate('/profile/premium')} />
+      </aside>
+      </div>
       {isRealClient && selectedPublicPost && (
         <div
           className="account-dialog-backdrop public-request-backdrop"

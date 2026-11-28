@@ -7,6 +7,7 @@ import { IconButton } from '../components/ui/IconButton';
 import { OptionsMenu } from '../components/ui/OptionsMenu';
 import { ReportSubmissionDialog, type ReportSubmissionTarget } from '../components/ReportSubmissionDialog';
 import { ArtTile } from '../components/ui/ArtTile';
+import { ProfileTagsCard, ProfileUpgradeCard } from '../components/ProfileSidebarCards';
 import { Icon } from '../assets/icons';
 import { ARTISTS, CURRENT_ARTIST } from '../data/mockData';
 import { useAuth } from '../context/AuthContext';
@@ -162,6 +163,7 @@ export function ArtistProfilePage() {
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState(false);
   const [reviewsDialogOpen, setReviewsDialogOpen] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<'all' | 1 | 2 | 3 | 4 | 5>('all');
 
   useEffect(() => {
     if (!coverDraft) return;
@@ -453,6 +455,13 @@ export function ArtistProfilePage() {
     const reviewAverage = artistReviews.length > 0
       ? artistReviews.reduce((total, review) => total + review.rating, 0) / artistReviews.length
       : null;
+    const reviewDistribution = ([5, 4, 3, 2, 1] as const).map((rating) => ({
+      rating,
+      count: artistReviews.filter((review) => review.rating === rating).length,
+    }));
+    const filteredReviews = reviewFilter === 'all'
+      ? artistReviews
+      : artistReviews.filter((review) => review.rating === reviewFilter);
     const reviewCards = (reviews: ArtistReview[]) => reviews.map((review) => (
       <article className="card" key={review.review_id} style={{ padding: '14px 16px', minWidth: 0, overflowWrap: 'anywhere' }}>
         <div className="row gap-10" style={{ alignItems: 'flex-start', minWidth: 0 }}>
@@ -484,8 +493,6 @@ export function ArtistProfilePage() {
         </div>
       </article>
     ));
-    const reviewPreview = artistReviews.slice(0, 3);
-
   const resetArtistPostForm = () => {
     setArtistPostDraft(EMPTY_COMMISSION_POST_DRAFT);
     setArtistPostFormOpen(false);
@@ -970,33 +977,12 @@ export function ArtistProfilePage() {
             <div className="artist-profile-details">
               {profile.source === 'mock' && (
                 <div className="artist-profile-mock-metadata">
-                  <div className="artist-profile-rating">
-                    <Icon name="star" style={{ width: 13, height: 13, stroke: 'none', fill: 'var(--ag-amber)' }} />
-                    <span className="t-sm fw-700">{profile.rating?.toFixed(1)}</span>
-                    <span className="t-xs c-low">{profile.reviewCount} reviews</span>
-                  </div>
                   <span><strong>{profile.completed}</strong> <span className="t-xs c-low">Completed</span></span>
                   <span><strong>{profile.responseTime}</strong> <span className="t-xs c-low">Response</span></span>
                 </div>
               )}
 
-              {profile.source === 'supabase' && reviewAverage !== null && (
-                <div className="artist-profile-rating" aria-label={`Rating ${reviewAverage.toFixed(1)} out of 5 from ${artistReviews.length} ${artistReviews.length === 1 ? 'review' : 'reviews'}`}>
-                  <Icon name="star" style={{ width: 14, height: 14, stroke: 'none', fill: 'var(--ag-amber)' }} />
-                  <span className="t-sm fw-700">{reviewAverage.toFixed(1)}</span>
-                  <span className="t-xs c-low">· {artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
-                </div>
-              )}
-
               <p className="t-xs c-mid artist-profile-bio">{profile.bio}</p>
-
-              {profile.tags.length > 0 && (
-                <div className="artist-profile-tags">
-                  {profile.tags.map((tag) => (
-                    <span className="chip" key={tag}>{tag}</span>
-                  ))}
-                </div>
-              )}
 
               <div className="artist-profile-actions">
                 {isViewingOwnProfile && (
@@ -1023,61 +1009,12 @@ export function ArtistProfilePage() {
       </div>
 
       <div className="artist-profile-layout-content">
-        <nav className="artist-profile-mobile-tabs" aria-label="Profile sections">
-          <a href="#artist-public-posts">Posts</a>
-          <a href="#artist-protected-portfolio">Portfolio</a>
-          <a href="#artist-reviews">Reviews</a>
-        </nav>
-
-        <aside className="artist-profile-sidebar" aria-label="Profile information">
-          <section className="artist-profile-about card ag-liquid-glass-soft">
-            <span className="section-title">About</span>
-            <p className="artist-profile-sidebar-bio">{profile.bio || 'No bio has been added yet.'}</p>
-          </section>
-          {profile.tags.length > 0 && (
-            <section className="artist-profile-sidebar-card card ag-liquid-glass-soft">
-              <span className="section-title">Specialties</span>
-              <div className="artist-profile-tags artist-profile-sidebar-tags">
-                {profile.tags.map((tag) => <span className="chip" key={tag}>{tag}</span>)}
-              </div>
-            </section>
-          )}
-          {(profile.source === 'mock' || profile.source === 'supabase') && (
-            <section className="artist-profile-sidebar-card card ag-liquid-glass-soft">
-              <span className="section-title">Artist overview</span>
-              {profile.source === 'mock' ? (
-                <div className="artist-profile-overview-list">
-                  <span><strong>{profile.completed}</strong><small>Completed</small></span>
-                  <span><strong>{profile.responseTime}</strong><small>Response</small></span>
-                </div>
-              ) : reviewAverage !== null ? (
-                <div className="artist-profile-overview-rating">
-                  <Icon name="star" style={{ width: 15, height: 15, stroke: 'none', fill: 'var(--ag-amber)' }} />
-                  <strong>{reviewAverage.toFixed(1)}</strong>
-                  <span className="t-xs c-low">{artistReviews.length} reviews</span>
-                </div>
-              ) : (
-                <div className="t-xs c-low">No reviews yet.</div>
-              )}
-            </section>
-          )}
-          {isSelf && (
-            <button
-              type="button"
-              className="artist-profile-pro-card"
-              onClick={() => navigate('/profile/premium')}
-            >
-              <span className="artist-profile-pro-icon" aria-hidden="true">
-                <Icon name="crown" />
-              </span>
-              <span>
-                <strong>{user?.isPro ? 'ArtGuard Pro active' : 'Upgrade to Pro'}</strong>
-                <small>{user?.isPro ? 'Your mock Pro benefits are enabled' : '0% transaction fees, advanced shielding'}</small>
-              </span>
-              <Icon name="chevron-r" />
-            </button>
-          )}
-        </aside>
+        <main className="artist-profile-main">
+          <nav className="artist-profile-mobile-tabs" aria-label="Profile sections">
+            <a href="#artist-public-posts">Posts</a>
+            <a href="#artist-protected-portfolio">Portfolio</a>
+            <a href="#artist-overview-reviews">Reviews</a>
+          </nav>
 
         {profile.source === 'mock' && <div className="row-between" style={{ marginBottom: 10 }}>
           <span className="section-title">Protected Portfolio</span>
@@ -1284,46 +1221,79 @@ export function ArtistProfilePage() {
           </div>}
         </div>}
 
-        {profile.source === 'supabase' && (
-          <section id="artist-reviews" style={{ marginBottom: 20 }} aria-labelledby="artist-reviews-title">
-            <div className="row-between" style={{ marginBottom: 10 }}>
-              <span id="artist-reviews-title" className="section-title">Reviews</span>
-              {!reviewsLoading && !reviewsError && artistReviews.length > 3 && (
-                <button type="button" className="link-sm" onClick={() => setReviewsDialogOpen(true)}>
-                  SEE ALL
-                </button>
-              )}
-            </div>
-            {reviewsLoading && <div className="t-sm c-mid" role="status">Loading reviews...</div>}
-            {!reviewsLoading && reviewsError && <div className="t-sm c-danger" role="alert">Could not load reviews.</div>}
-            {!reviewsLoading && !reviewsError && artistReviews.length === 0 && <div className="t-sm c-mid">No reviews yet.</div>}
-            {!reviewsLoading && !reviewsError && artistReviews.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {reviewCards(reviewPreview)}
-              </div>
-            )}
-          </section>
-        )}
-
         {profile.source === 'supabase' && reviewsDialogOpen && (
-          <div className="account-dialog-backdrop" role="presentation" onClick={() => setReviewsDialogOpen(false)}>
+          <div className="account-dialog-backdrop artist-reviews-backdrop" role="presentation" onClick={() => setReviewsDialogOpen(false)}>
             <section
-              className="account-dialog"
+              className="account-dialog artist-reviews-dialog"
               role="dialog"
               aria-modal="true"
               aria-labelledby="artist-reviews-dialog-title"
               onClick={(event) => event.stopPropagation()}
-              style={{ width: 'min(100%, 640px)' }}
             >
-              <div className="row-between" style={{ marginBottom: 14, gap: 12 }}>
-                <h2 id="artist-reviews-dialog-title" style={{ margin: 0 }}>All Reviews</h2>
-                <button type="button" className="link-sm" onClick={() => setReviewsDialogOpen(false)} aria-label="Close reviews">
-                  Close
+              <div className="row-between artist-reviews-dialog-header">
+                <h2 id="artist-reviews-dialog-title" className="section-title">Reviews</h2>
+                <button type="button" className="icon-btn" onClick={() => setReviewsDialogOpen(false)} aria-label="Close reviews">
+                  <Icon name="x" />
                 </button>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 'min(65dvh, 560px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                {reviewCards(artistReviews)}
-              </div>
+              {!reviewsLoading && !reviewsError && artistReviews.length > 0 && (
+                <>
+                  <div className="artist-review-summary">
+                    <strong>{reviewAverage?.toFixed(1)}</strong>
+                    <span className="artist-review-summary-stars" aria-label="5-star scale">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Icon key={star} name="star" />
+                      ))}
+                    </span>
+                    <span className="t-xs c-low">{artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
+                  </div>
+                  <div className="artist-review-distribution" aria-label="Rating distribution">
+                    {reviewDistribution.map(({ rating, count }) => (
+                      <div className="artist-review-distribution-row" key={rating}>
+                        <span>{rating} star</span>
+                        <div className="artist-review-distribution-track">
+                          <span style={{ width: `${(count / artistReviews.length) * 100}%` }} />
+                        </div>
+                        <span>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="artist-review-filters" role="group" aria-label="Filter reviews by rating">
+                    <button
+                      type="button"
+                      className={reviewFilter === 'all' ? 'is-active' : ''}
+                      aria-pressed={reviewFilter === 'all'}
+                      onClick={() => setReviewFilter('all')}
+                    >
+                      All ({artistReviews.length})
+                    </button>
+                    {reviewDistribution.map(({ rating, count }) => (
+                      <button
+                        type="button"
+                        className={reviewFilter === rating ? 'is-active' : ''}
+                        aria-pressed={reviewFilter === rating}
+                        onClick={() => setReviewFilter(rating)}
+                        key={rating}
+                      >
+                        {rating} star ({count})
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {reviewsLoading ? (
+                <div className="t-sm c-mid" role="status">Loading reviews...</div>
+              ) : reviewsError ? (
+                <div className="t-sm c-danger" role="alert">Could not load reviews.</div>
+              ) : artistReviews.length === 0 ? (
+                <div className="t-sm c-mid artist-reviews-empty">No reviews yet.</div>
+              ) : filteredReviews.length === 0 ? (
+                <div className="t-sm c-mid artist-reviews-empty">No reviews match this rating.</div>
+              ) : (
+                <div className="artist-reviews-list">
+                  {reviewCards(filteredReviews)}
+                </div>
+              )}
             </section>
           </div>
         )}
@@ -1603,6 +1573,48 @@ export function ArtistProfilePage() {
           ))}
         </div>}
 
+        </main>
+        <aside className="artist-profile-sidebar" aria-label="Profile information">
+          <ProfileTagsCard
+            title="Specialties"
+            tags={profile.tags}
+            emptyMessage="No specialties have been added yet."
+          />
+          <section className="artist-profile-overview-card card ag-liquid-glass-soft" id="artist-overview-reviews">
+            <span className="section-title">Artist overview</span>
+            {profile.source === 'mock' ? (
+              <div className="artist-profile-overview-list">
+                <span><strong>{profile.completed}</strong><small>Completed</small></span>
+                <span><strong>{profile.responseTime}</strong><small>Response</small></span>
+              </div>
+            ) : reviewsLoading ? (
+              <div className="t-xs c-low" role="status">Loading reviews...</div>
+            ) : reviewsError ? (
+              <div className="t-xs c-danger" role="alert">Could not load reviews.</div>
+            ) : reviewAverage === null ? (
+              <div className="t-xs c-low">No reviews yet.</div>
+            ) : (
+              <div className="artist-profile-overview-rating" aria-label={`Rated ${reviewAverage.toFixed(1)} out of 5 from ${artistReviews.length} reviews`}>
+                <Icon name="star" />
+                <strong>{reviewAverage.toFixed(1)}</strong>
+                <span className="t-xs c-low">{artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
+              </div>
+            )}
+            {profile.source === 'supabase' && (
+              <button
+                type="button"
+                className="artist-profile-reviews-trigger"
+                onClick={() => {
+                  setReviewFilter('all');
+                  setReviewsDialogOpen(true);
+                }}
+              >
+                View reviews <Icon name="chevron-r" />
+              </button>
+            )}
+          </section>
+          {isSelf && <ProfileUpgradeCard isPro={Boolean(user?.isPro)} onClick={() => navigate('/profile/premium')} />}
+        </aside>
       </div>
       {toast}
       <ReportSubmissionDialog target={reportTarget} onClose={() => setReportTarget(null)} />
