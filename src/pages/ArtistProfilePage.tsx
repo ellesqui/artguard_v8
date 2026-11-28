@@ -941,22 +941,24 @@ export function ArtistProfilePage() {
                 initials={profile.initials}
                 style={profile.avatarStyle}
               />
-              <div className="artist-profile-display-name">
-                <span>{profile.name}</span>
-                {profile.verified && (
-                  <Icon
-                    name="check-circle"
-                    style={{ width: 16, height: 16, stroke: 'var(--ag-sky)', fill: 'rgba(46,134,201,0.2)' }}
-                  />
-                )}
-                {isSelf && !profile.verified && profile.verificationStatus === 'pending' && (
-                  <span className="t-xs c-warning">Verification Pending</span>
-                )}
-                {isSelf && !profile.verified && profile.verificationStatus === 'rejected' && (
-                  <span className="t-xs c-danger">Verification Needs Revision</span>
-                )}
+              <div className="artist-profile-identity-copy">
+                <div className="artist-profile-display-name">
+                  <span>{profile.name}</span>
+                  {profile.verified && (
+                    <Icon
+                      name="check-circle"
+                      style={{ width: 16, height: 16, stroke: 'var(--ag-sky)', fill: 'rgba(46,134,201,0.2)' }}
+                    />
+                  )}
+                  {isSelf && !profile.verified && profile.verificationStatus === 'pending' && (
+                    <span className="t-xs c-warning">Verification Pending</span>
+                  )}
+                  {isSelf && !profile.verified && profile.verificationStatus === 'rejected' && (
+                    <span className="t-xs c-danger">Verification Needs Revision</span>
+                  )}
+                </div>
+                <div className="artist-profile-username">{profile.handle}</div>
               </div>
-              <div className="artist-profile-username">{profile.handle}</div>
             </div>
 
             {profile.source === 'mock' && (

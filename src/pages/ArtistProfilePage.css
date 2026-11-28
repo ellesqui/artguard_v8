@@ -15,6 +15,7 @@
 }
 
 .artist-profile-header {
+  --profile-cover-rise: 18px;
   grid-column: 1 / -1;
   position: relative;
   display: grid;
@@ -22,7 +23,9 @@
   grid-template-rows: 44px 112px auto;
   column-gap: 20px;
   min-width: 0;
+  margin-top: calc(0px - var(--profile-cover-rise));
   margin-bottom: 4px;
+  padding-top: var(--profile-cover-rise);
   border: 1px solid var(--ag-border-soft);
   border-radius: 18px;
   background: var(--ag-surface);
@@ -76,11 +79,24 @@
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: 112px minmax(0, 1fr);
-  grid-template-rows: minmax(112px, auto) auto;
+  grid-template-rows: minmax(112px, auto);
   align-items: center;
-  gap: 2px 20px;
+  gap: 0 20px;
   min-height: 112px;
   min-width: 0;
+}
+
+.artist-profile-identity-copy {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  align-self: stretch;
+  box-sizing: border-box;
+  padding-top: 24px;
 }
 
 .artist-profile-info > :not(.artist-profile-identity) {
@@ -88,9 +104,6 @@
 }
 
 .artist-profile-display-name {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -112,8 +125,6 @@
 }
 
 .artist-profile-username {
-  grid-column: 2;
-  grid-row: 2;
   color: var(--ag-text-mid);
   font-size: 13.5px;
   font-weight: 600;
@@ -387,6 +398,7 @@
   }
 
   .artist-profile-header {
+    --profile-cover-rise: 12px;
     grid-template-columns: 88px minmax(0, 1fr);
     grid-template-rows: 44px 50px auto;
     border-radius: 16px;
@@ -415,9 +427,13 @@
 
   .artist-profile-identity {
     grid-template-columns: 88px minmax(0, 1fr);
-    grid-template-rows: minmax(88px, auto) auto;
+    grid-template-rows: minmax(88px, auto);
     column-gap: 12px;
-    min-height: 104px;
+    min-height: 88px;
+  }
+
+  .artist-profile-identity-copy {
+    padding-top: 23px;
   }
 
   .artist-profile-info > :not(.artist-profile-identity) {
@@ -463,9 +479,9 @@
 
   .artist-profile-identity {
     grid-template-columns: 82px minmax(0, 1fr);
-    grid-template-rows: minmax(82px, auto) auto;
+    grid-template-rows: minmax(82px, auto);
     column-gap: 10px;
-    min-height: 98px;
+    min-height: 82px;
   }
 
   .artist-profile-mobile-tabs {

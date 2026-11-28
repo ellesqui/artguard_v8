@@ -1,8 +1,10 @@
 .profile-cover-banner {
+  --profile-cover-rise: 18px;
   position: relative;
-  height: 200px;
+  height: calc(200px + var(--profile-cover-rise));
+  margin-bottom: calc(0px - var(--profile-cover-rise));
+  transform: translateY(calc(0px - var(--profile-cover-rise)));
   border-radius: 17px 17px 0 0;
-  border-bottom: 1px solid var(--ag-border-soft);
   background:
     radial-gradient(circle at 78% 30%, rgba(246, 196, 83, 0.12), transparent 24%),
     linear-gradient(135deg, rgba(114, 173, 255, 0.12), rgba(11, 18, 35, 0.9)),
@@ -90,7 +92,8 @@
 
 @media (max-width: 767px) {
   .profile-cover-banner {
-    height: 140px;
+    --profile-cover-rise: 12px;
+    height: calc(140px + var(--profile-cover-rise));
   }
 }
 

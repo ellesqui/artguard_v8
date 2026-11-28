@@ -4,12 +4,14 @@
 }
 
 .client-profile-identity-card {
+  --profile-cover-rise: 18px;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  margin-top: calc(0px - var(--profile-cover-rise));
   margin-bottom: 20px;
-  padding: 0 18px 20px;
+  padding: var(--profile-cover-rise) 18px 20px;
   border: 1px solid var(--ag-border-soft);
   border-radius: 18px;
   background: var(--ag-surface);
@@ -213,6 +215,12 @@
 .client-profile-request-tabs .btn {
   width: 100%;
   min-height: 44px;
+}
+
+@media (max-width: 767px) {
+  .client-profile-identity-card {
+    --profile-cover-rise: 12px;
+  }
 }
 
 @media (max-width: 480px) {
