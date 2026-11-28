@@ -778,6 +778,12 @@ export function ArtistProfilePage() {
           onError={() => setCoverLoadError('Cover photo could not be loaded.')}
         />
       )}
+      {isSelf ? (
+        <div className="px-hd row-between profile-page-toolbar">
+          <span className="h-title">My Profile</span>
+          <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
+        </div>
+      ) : profileHeaderControls}
       {coverLoadError && <div className="profile-cover-load-error" role="status">{coverLoadError}</div>}
       {canChangeCover && (
         <>
@@ -900,17 +906,8 @@ export function ArtistProfilePage() {
 
   return (
     <ScreenShell
-      contentClassName={`artist-profile-content${isSelf ? '' : ' artist-profile-content--public'}`}
-      header={
-        isSelf ? (
-          <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
-            <div className="px-hd row-between profile-page-toolbar">
-              <span className="h-title">My Profile</span>
-              <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
-            </div>
-          </div>
-        ) : undefined
-      }
+      contentClassName="artist-profile-content"
+      padContent={false}
       footer={
         isSelf ? (
           <BottomNav active="profile" />
@@ -936,12 +933,9 @@ export function ArtistProfilePage() {
         )
       }
     >
+      <div className="artist-profile-hero">
       {coverBanner}
-      <div className="artist-profile-layout-content">
         <section className="artist-profile-header" aria-label="Artist profile">
-          {profileHeaderControls}
-          <div className="artist-profile-banner profile-cover-spacer" aria-hidden="true" />
-
           <div className="artist-profile-info">
             <div className="artist-profile-identity">
               <ProfileAvatar
@@ -1026,7 +1020,9 @@ export function ArtistProfilePage() {
             </div>
           </div>
         </section>
+      </div>
 
+      <div className="artist-profile-layout-content">
         <nav className="artist-profile-mobile-tabs" aria-label="Profile sections">
           <a href="#artist-public-posts">Posts</a>
           <a href="#artist-protected-portfolio">Portfolio</a>

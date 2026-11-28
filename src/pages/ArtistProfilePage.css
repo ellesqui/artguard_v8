@@ -10,54 +10,29 @@
   align-items: start;
 }
 
-.app-content-inner.artist-profile-content--public {
-  padding-top: 18px;
-}
-
 .artist-profile-header {
-  --profile-cover-rise: 18px;
-  --profile-cover-panel-start: calc(200px + var(--profile-cover-rise));
-  grid-column: 1 / -1;
   position: relative;
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  grid-template-rows: 44px 112px auto;
-  column-gap: 20px;
   min-width: 0;
-  margin-top: -219px;
-  margin-bottom: 20px;
-  min-height: 430px;
-  padding-top: var(--profile-cover-rise);
+  margin: -56px 0 0;
+  padding: 0 24px 24px;
   border: 0;
   border-radius: 0 0 18px 18px;
-  background: linear-gradient(
-    180deg,
-    transparent 0,
-    transparent var(--profile-cover-panel-start),
-    var(--ag-surface) calc(var(--profile-cover-panel-start) + 18px),
-    var(--ag-surface) 100%
-  );
+  background: linear-gradient(180deg, transparent 0, transparent 18px, var(--ag-surface) 38px, var(--ag-surface) 100%);
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .artist-profile-header-controls {
-  grid-column: 1 / -1;
-  grid-row: 1;
-  z-index: 3;
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  left: 16px;
+  z-index: 4;
   display: flex;
   min-height: 44px;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px 0;
-}
-
-.artist-profile-banner {
-  grid-column: 1 / -1;
-  grid-row: 1 / 3;
-}
-
-.artist-profile-banner.profile-cover-spacer {
-  align-self: start;
 }
 
 .artist-avatar {
@@ -73,15 +48,11 @@
 }
 
 .artist-profile-info {
-  grid-column: 1 / -1;
-  grid-row: 3;
-  min-width: 0;
-  min-height: 112px;
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
-  align-content: start;
   gap: 0 20px;
-  padding: 12px 20px 16px 24px;
+  min-width: 0;
+  padding: 0;
   z-index: 2;
 }
 
@@ -94,7 +65,7 @@
   gap: 0 20px;
   min-height: 112px;
   min-width: 0;
-  margin-bottom: 8px;
+  margin: 0;
 }
 
 .artist-profile-identity-copy {
@@ -114,7 +85,7 @@
   grid-column: 2;
   display: grid;
   min-width: 0;
-  margin-top: -28px;
+  margin-top: -22px;
   gap: 8px;
 }
 
@@ -403,18 +374,14 @@
 
 @media (max-width: 767px) {
   .artist-profile-header {
-    --profile-cover-rise: 12px;
-    --profile-cover-panel-start: calc(140px + var(--profile-cover-rise));
-    grid-template-columns: 88px minmax(0, 1fr);
-    grid-template-rows: 44px 50px auto;
-    min-height: 376px;
-    margin-top: -153px;
+    padding: 0 16px 20px;
     border-radius: 0 0 16px 16px;
   }
 
   .artist-profile-header-controls {
-    min-height: 44px;
-    padding: 6px 8px 0;
+    top: 12px;
+    right: 12px;
+    left: 12px;
   }
 
   .artist-profile-header-controls .icon-btn {
@@ -430,7 +397,6 @@
   .artist-profile-info {
     grid-template-columns: 88px minmax(0, 1fr);
     gap: 0 12px;
-    padding: 10px 12px 14px;
   }
 
   .artist-profile-identity {
@@ -441,8 +407,7 @@
   }
 
   .artist-profile-details {
-    grid-column: 2;
-    margin-top: -20px;
+    margin-top: -8px;
   }
 
   .artist-profile-display-name {
@@ -457,20 +422,12 @@
     min-height: 44px;
   }
 
-  .app-content-inner.artist-profile-content--public {
-    padding-top: 12px;
-  }
-
   .artist-protected-portfolio {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 520px) {
-  .artist-profile-header {
-    grid-template-columns: 82px minmax(0, 1fr);
-  }
-
   .artist-avatar {
     width: 82px;
     height: 82px;
@@ -478,8 +435,7 @@
 
   .artist-profile-info {
     grid-template-columns: 82px minmax(0, 1fr);
-    padding-right: 10px;
-    padding-left: 10px;
+    gap: 0 10px;
   }
 
   .artist-profile-identity {
@@ -490,7 +446,7 @@
   }
 
   .artist-profile-details {
-    margin-top: -12px;
+    margin-top: -6px;
   }
 
   .artist-profile-mobile-tabs {
