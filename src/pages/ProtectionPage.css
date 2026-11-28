@@ -833,6 +833,10 @@
     width: 100%;
   }
 
+  .protected-artwork-preview {
+    height: 112px;
+  }
+
   .protection-page-header {
     padding-top: 12px;
     padding-bottom: 12px;
@@ -906,6 +910,14 @@
 }
 
 @media (max-width: 520px) {
+  .protected-artwork-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .protected-artwork-preview {
+    height: 100px;
+  }
+
   .protection-settings-header {
     min-height: 0;
     flex-direction: column;
