@@ -763,6 +763,63 @@ export function ArtistProfilePage() {
     </div>
   );
 
+  const coverBanner = (
+    <div className="profile-cover-banner">
+      {coverUrl && (
+        <img
+          key={coverUrl}
+          className={`profile-cover-image${loadedCoverUrl === coverUrl ? ' is-loaded' : ''}`}
+          src={coverUrl}
+          alt=""
+          onLoad={() => {
+            setLoadedCoverUrl(coverUrl);
+            setCoverLoadError(undefined);
+          }}
+          onError={() => setCoverLoadError('Cover photo could not be loaded.')}
+        />
+      )}
+      {coverLoadError && <div className="profile-cover-load-error" role="status">{coverLoadError}</div>}
+      {canChangeCover && (
+        <>
+          <input
+            ref={coverFileInputRef}
+            className="profile-cover-file-input"
+            type="file"
+            accept="image/png,image/jpeg"
+            aria-label="Select cover photo"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
+              void handleCoverPhotoSelection(file);
+            }}
+          />
+          <div className="profile-cover-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
+              <Icon name="image" />
+              {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
+            </button>
+            {coverDraft && (
+              <>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto()} disabled={coverSaving}>
+                  {coverSaving ? 'Saving…' : 'Save Cover'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
+                  disabled={coverSaving}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+          {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
+        </>
+      )}
+    </div>
+  );
+
   const handleMessageArtist = async () => {
     const recipientId = realProfile?.id;
     if (startingConversation || !recipientId || !user || recipientId === user.id) return;
@@ -843,13 +900,18 @@ export function ArtistProfilePage() {
 
   return (
     <ScreenShell
-      padContent={false}
-      header={isSelf ? (
-        <div className="px-hd row-between">
-          <span className="h-title">My Profile</span>
-          <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
+      contentClassName={`artist-profile-content${isSelf ? '' : ' artist-profile-content--public'}`}
+      header={
+        <div className={`profile-page-shell-header${isSelf ? ' profile-page-shell-header--with-toolbar' : ''}`}>
+          {coverBanner}
+          {isSelf && (
+            <div className="px-hd row-between profile-page-toolbar">
+              <span className="h-title">My Profile</span>
+              <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
+            </div>
+          )}
         </div>
-      ) : undefined}
+      }
       footer={
         isSelf ? (
           <BottomNav active="profile" />
@@ -875,63 +937,10 @@ export function ArtistProfilePage() {
         )
       }
     >
-      <div className="app-content-inner artist-profile-content">
+      <div className="artist-profile-layout-content">
         <section className="artist-profile-header" aria-label="Artist profile">
           {profileHeaderControls}
-          <div className="artist-profile-banner profile-cover-banner">
-            {coverUrl && (
-              <img
-                key={coverUrl}
-                className={`profile-cover-image${loadedCoverUrl === coverUrl ? ' is-loaded' : ''}`}
-                src={coverUrl}
-                alt=""
-                onLoad={() => {
-                  setLoadedCoverUrl(coverUrl);
-                  setCoverLoadError(undefined);
-                }}
-                onError={() => setCoverLoadError('Cover photo could not be loaded.')}
-              />
-            )}
-            {coverLoadError && <div className="profile-cover-load-error" role="status">{coverLoadError}</div>}
-          </div>
-          {canChangeCover && (
-            <>
-              <input
-                ref={coverFileInputRef}
-                className="profile-cover-file-input"
-                type="file"
-                accept="image/png,image/jpeg"
-                aria-label="Select cover photo"
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = '';
-                  void handleCoverPhotoSelection(file);
-                }}
-              />
-              <div className="profile-cover-actions">
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
-                  <Icon name="image" />
-                  {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
-                </button>
-                {coverDraft && (
-                  <>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto()} disabled={coverSaving}>
-                      {coverSaving ? 'Saving…' : 'Save Cover'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
-                      disabled={coverSaving}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
-              </div>
-              {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
-            </>
-          )}
+          <div className="artist-profile-banner profile-cover-spacer" aria-hidden="true" />
 
           <div className="artist-profile-info">
             <div className="artist-profile-identity">
@@ -957,58 +966,63 @@ export function ArtistProfilePage() {
                     <span className="t-xs c-danger">Verification Needs Revision</span>
                   )}
                 </div>
-                <div className="artist-profile-username">{profile.handle}</div>
+                <div className="profile-username-row artist-profile-username-row">
+                  <span className="profile-username">{profile.handle}</span>
+                  <span className="profile-role-badge">Artist</span>
+                </div>
               </div>
             </div>
 
-            {profile.source === 'mock' && (
-              <div className="artist-profile-mock-metadata">
-                <div className="artist-profile-rating">
-                  <Icon name="star" style={{ width: 13, height: 13, stroke: 'none', fill: 'var(--ag-amber)' }} />
-                  <span className="t-sm fw-700">{profile.rating?.toFixed(1)}</span>
-                  <span className="t-xs c-low">{profile.reviewCount} reviews</span>
+            <div className="artist-profile-details">
+              {profile.source === 'mock' && (
+                <div className="artist-profile-mock-metadata">
+                  <div className="artist-profile-rating">
+                    <Icon name="star" style={{ width: 13, height: 13, stroke: 'none', fill: 'var(--ag-amber)' }} />
+                    <span className="t-sm fw-700">{profile.rating?.toFixed(1)}</span>
+                    <span className="t-xs c-low">{profile.reviewCount} reviews</span>
+                  </div>
+                  <span><strong>{profile.completed}</strong> <span className="t-xs c-low">Completed</span></span>
+                  <span><strong>{profile.responseTime}</strong> <span className="t-xs c-low">Response</span></span>
                 </div>
-                <span><strong>{profile.completed}</strong> <span className="t-xs c-low">Completed</span></span>
-                <span><strong>{profile.responseTime}</strong> <span className="t-xs c-low">Response</span></span>
-              </div>
-            )}
-
-            {profile.source === 'supabase' && reviewAverage !== null && (
-              <div className="artist-profile-rating" aria-label={`Rating ${reviewAverage.toFixed(1)} out of 5 from ${artistReviews.length} ${artistReviews.length === 1 ? 'review' : 'reviews'}`}>
-                <Icon name="star" style={{ width: 14, height: 14, stroke: 'none', fill: 'var(--ag-amber)' }} />
-                <span className="t-sm fw-700">{reviewAverage.toFixed(1)}</span>
-                <span className="t-xs c-low">· {artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
-              </div>
-            )}
-
-            <p className="t-xs c-mid artist-profile-bio">{profile.bio}</p>
-
-            {profile.tags.length > 0 && (
-              <div className="artist-profile-tags">
-                {profile.tags.map((tag) => (
-                  <span className="chip" key={tag}>{tag}</span>
-                ))}
-              </div>
-            )}
-
-            <div className="artist-profile-actions">
-              {isViewingOwnProfile && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/profile/edit')}>
-                  Edit Profile
-                </button>
               )}
-              {profile.source === 'supabase' && !isViewingOwnProfile && realProfile && (
-                <button
-                  type="button"
-                  className="btn btn-primary artist-profile-message-button"
-                  onClick={() => void handleMessageArtist()}
-                  disabled={startingConversation || !user || realProfile.id === user.id}
-                >
-                  <Icon name="chat" style={{ width: 16, height: 16, stroke: '#fff' }} />
-                  {startingConversation ? 'Opening conversation…' : 'Message'}
-                </button>
+
+              {profile.source === 'supabase' && reviewAverage !== null && (
+                <div className="artist-profile-rating" aria-label={`Rating ${reviewAverage.toFixed(1)} out of 5 from ${artistReviews.length} ${artistReviews.length === 1 ? 'review' : 'reviews'}`}>
+                  <Icon name="star" style={{ width: 14, height: 14, stroke: 'none', fill: 'var(--ag-amber)' }} />
+                  <span className="t-sm fw-700">{reviewAverage.toFixed(1)}</span>
+                  <span className="t-xs c-low">· {artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
+                </div>
               )}
-              {messageError && <div className="t-xs c-danger artist-profile-message-error" role="alert">{messageError}</div>}
+
+              <p className="t-xs c-mid artist-profile-bio">{profile.bio}</p>
+
+              {profile.tags.length > 0 && (
+                <div className="artist-profile-tags">
+                  {profile.tags.map((tag) => (
+                    <span className="chip" key={tag}>{tag}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="artist-profile-actions">
+                {isViewingOwnProfile && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/profile/edit')}>
+                    Edit Profile
+                  </button>
+                )}
+                {profile.source === 'supabase' && !isViewingOwnProfile && realProfile && (
+                  <button
+                    type="button"
+                    className="btn btn-primary artist-profile-message-button"
+                    onClick={() => void handleMessageArtist()}
+                    disabled={startingConversation || !user || realProfile.id === user.id}
+                  >
+                    <Icon name="chat" style={{ width: 16, height: 16, stroke: '#fff' }} />
+                    {startingConversation ? 'Opening conversation…' : 'Message'}
+                  </button>
+                )}
+                {messageError && <div className="t-xs c-danger artist-profile-message-error" role="alert">{messageError}</div>}
+              </div>
             </div>
           </div>
         </section>

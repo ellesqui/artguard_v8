@@ -322,7 +322,7 @@ export function ClientProfilePage() {
   };
 
   const coverBanner = (
-    <div className="client-profile-banner profile-cover-banner" aria-label="Client cover photo">
+    <div className="profile-cover-banner" aria-label="Client cover photo">
       {coverUrl && (
         <img
           key={coverUrl}
@@ -779,25 +779,36 @@ export function ClientProfilePage() {
     const viewedClientIsOwner = viewedClient.id === user?.id;
     return (
       <ScreenShell
+        contentClassName="client-profile-content"
         header={
-          <div className="px-hd row-between">
-            <IconButton icon="chevron-l" onClick={() => navigate(-1)} ariaLabel="Back" />
-            <span className="h-title profile-title-font">Client Profile</span>
-            <span style={{ width: 38 }} />
+          <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
+            {coverBanner}
+            <div className="px-hd row-between profile-page-toolbar">
+              <IconButton icon="chevron-l" onClick={() => navigate(-1)} ariaLabel="Back" />
+              <span className="h-title profile-title-font">Client Profile</span>
+              <span style={{ width: 38 }} />
+            </div>
           </div>
         }
       >
         <section className="client-profile-identity-card" aria-label="Client profile">
-          {coverBanner}
+          <div className="client-profile-banner profile-cover-spacer" aria-hidden="true" />
           <div className="client-profile-identity-body">
-            <ProfileAvatar
-              className="avatar avatar-xl client-profile-avatar"
-              imageUrl={viewedClient.avatar_data_url}
-              initials={viewedClientInitials}
-              style={{ background: 'var(--ag-grad-accent)' }}
-            />
-            <div className="client-profile-name">{viewedClient.name}</div>
-            <div className="t-sm c-low client-profile-handle">@{viewedClient.username} · Client</div>
+            <div className="client-profile-identity">
+              <ProfileAvatar
+                className="avatar avatar-xl client-profile-avatar"
+                imageUrl={viewedClient.avatar_data_url}
+                initials={viewedClientInitials}
+                style={{ background: 'var(--ag-grad-accent)' }}
+              />
+              <div className="client-profile-identity-copy">
+                <div className="client-profile-name">{viewedClient.name}</div>
+                <div className="profile-username-row client-profile-handle">
+                  <span className="profile-username">@{viewedClient.username}</span>
+                  <span className="profile-role-badge">Client</span>
+                </div>
+              </div>
+            </div>
             {viewedClient.bio && <p className="client-profile-bio">{viewedClient.bio}</p>}
             {viewedClientIsOwner && (
               <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
@@ -1005,25 +1016,36 @@ export function ClientProfilePage() {
 
   return (
     <ScreenShell
+      contentClassName="client-profile-content"
       header={
-        <div className="px-hd row-between">
-          <span className="h-title">My Profile</span>
-          <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
+        <div className="profile-page-shell-header profile-page-shell-header--with-toolbar">
+          {coverBanner}
+          <div className="px-hd row-between profile-page-toolbar">
+            <span className="h-title">My Profile</span>
+            <IconButton icon="dots" onClick={() => navigate('/profile/settings')} ariaLabel="Settings" />
+          </div>
         </div>
       }
       footer={<BottomNav active="profile" />}
     >
       <section className="client-profile-identity-card" aria-label="Client profile">
-        {coverBanner}
+        <div className="client-profile-banner profile-cover-spacer" aria-hidden="true" />
         <div className="client-profile-identity-body">
-          <ProfileAvatar
-            className="avatar avatar-xl client-profile-avatar"
-            imageUrl={user?.avatarDataUrl}
-            initials={initials}
-            style={{ background: 'var(--ag-grad-accent)' }}
-          />
-          <div className="client-profile-name">{user?.name || 'Client'}</div>
-          <div className="t-xs c-low client-profile-handle">@{usernameFromEmail(user?.email)} · Client</div>
+          <div className="client-profile-identity">
+            <ProfileAvatar
+              className="avatar avatar-xl client-profile-avatar"
+              imageUrl={user?.avatarDataUrl}
+              initials={initials}
+              style={{ background: 'var(--ag-grad-accent)' }}
+            />
+            <div className="client-profile-identity-copy">
+              <div className="client-profile-name">{user?.name || 'Client'}</div>
+              <div className="profile-username-row client-profile-handle">
+                <span className="profile-username">@{usernameFromEmail(user?.email)}</span>
+                <span className="profile-role-badge">Client</span>
+              </div>
+            </div>
+          </div>
           {user?.bio && <p className="client-profile-bio">{user.bio}</p>}
           <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
             Edit Profile

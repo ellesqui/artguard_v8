@@ -5,24 +5,32 @@
 
 .client-profile-identity-card {
   --profile-cover-rise: 18px;
+  --profile-cover-panel-start: calc(200px + var(--profile-cover-rise));
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   margin-top: calc(0px - var(--profile-cover-rise));
   margin-bottom: 20px;
+  min-height: 430px;
   padding: var(--profile-cover-rise) 18px 20px;
-  border: 1px solid var(--ag-border-soft);
-  border-radius: 18px;
-  background: var(--ag-surface);
-  overflow: hidden;
+  border: 0;
+  border-radius: 0 0 18px 18px;
+  background: linear-gradient(
+    180deg,
+    transparent 0,
+    transparent var(--profile-cover-panel-start),
+    var(--ag-surface) calc(var(--profile-cover-panel-start) + 18px),
+    var(--ag-surface) 100%
+  );
+  overflow: visible;
   box-sizing: border-box;
 }
 
 .client-profile-banner {
   flex: 0 0 auto;
-  width: calc(100% + 36px);
-  margin-left: -18px;
+  align-self: stretch;
+  width: 100%;
 }
 
 .client-profile-identity-body {
@@ -34,34 +42,53 @@
   width: 100%;
   min-width: 0;
   margin-top: -36px;
-  gap: 4px;
+  gap: 0;
   box-sizing: border-box;
   text-align: center;
+}
+
+.client-profile-identity {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 0 20px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.client-profile-identity-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .client-profile-avatar {
   width: 112px;
   height: 112px;
-  margin: 0 0 8px;
+  margin: 0;
   border: 5px solid var(--ag-surface);
   box-shadow: 0 8px 24px rgba(5, 10, 24, 0.24);
   flex: 0 0 auto;
 }
 
 .client-profile-name {
-  width: 100%;
   min-width: 0;
+  margin: 0;
   font-size: 24px;
   font-weight: 750;
   line-height: 1.15;
   overflow-wrap: anywhere;
-  text-align: center;
+  text-align: left;
 }
 
 .client-profile-handle {
   min-width: 0;
+  justify-content: flex-start;
   overflow-wrap: anywhere;
-  text-align: center;
+  text-align: left;
 }
 
 .client-profile-bio {
@@ -220,18 +247,21 @@
 @media (max-width: 767px) {
   .client-profile-identity-card {
     --profile-cover-rise: 12px;
+    --profile-cover-panel-start: calc(140px + var(--profile-cover-rise));
+    min-height: 379px;
+    border-radius: 0 0 16px 16px;
   }
 }
 
 @media (max-width: 480px) {
-  .client-profile-identity-body {
-    gap: 4px;
+  .client-profile-identity {
+    grid-template-columns: 88px minmax(0, 1fr);
+    column-gap: 12px;
   }
 
   .client-profile-avatar {
     width: 88px;
     height: 88px;
-    margin-bottom: 8px;
   }
 
   .client-profile-name {
@@ -250,5 +280,11 @@
 
   .client-profile-direct-request-heading {
     gap: 7px;
+  }
+}
+
+@media (max-width: 375px) {
+  .client-profile-identity-card {
+    min-height: 428px;
   }
 }
