@@ -1674,35 +1674,7 @@ export function CommissionWorkspacePage() {
                   >
                     Complete Commission
                   </button>
-                ) : (
-                  <div className="t-xs c-low workspace-action-note">
-                    {completionBlocker === null && finalDeliveryRequired && !finalDeliveryAcceptanceForCommission?.loaded
-                      ? 'Checking Final Delivery acceptance…'
-                      : completionBlocker === null && finalDeliveryRequired && !finalDeliveryAccepted
-                        ? 'Accept the current Final Delivery before completing.'
-                        : completionBlocker === 'deliverables-loading'
-                      ? 'Checking deliverables…'
-                      : completionBlocker === 'milestones-loading'
-                        ? 'Checking milestones…'
-                        : completionBlocker === 'revisions-loading'
-                          ? 'Checking revision status…'
-                          : completionBlocker === 'deliverables-unavailable'
-                            ? 'Deliverables could not be verified. Retry before completing.'
-                            : completionBlocker === 'milestones-unavailable'
-                              ? 'Milestones could not be verified. Retry before completing.'
-                              : completionBlocker === 'revisions-unavailable'
-                                ? 'Revision status could not be verified. Retry before completing.'
-                                : completionBlocker === 'no-approved-deliverable'
-                                  ? 'No approved final deliverable yet.'
-                                  : completionBlocker === 'deliverables-awaiting-review'
-                                    ? 'One or more deliverables are still awaiting review.'
-                                    : completionBlocker === 'milestones-incomplete'
-                                      ? 'Complete all milestones before completing.'
-                                      : completionBlocker === 'revisions-unresolved'
-                                        ? 'Revisions are still unresolved.'
-                                        : 'Commission must be in progress before it can be completed.'}
-                  </div>
-                )}
+                  ) : null}
                 {completionError && <div className="t-xs c-danger" role="alert">{completionError}</div>}
                 {revisionRequestsError && (
                   <div className="t-xs c-danger" role="alert">

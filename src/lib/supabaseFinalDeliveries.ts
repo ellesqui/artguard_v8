@@ -155,7 +155,13 @@ export async function verifyAndSubmitFinalDelivery(deliveryId: string): Promise<
   const { data, error } = await client.functions.invoke('final-delivery-storage', {
     body: { action: 'verify-submit', deliveryId },
   });
-  if (error) throw error;
+  if (isRecord(data) && typeof data.error === 'string') {
+    const retryable = data.retryable === true;
+    throw new Error(retryable
+      ? 'Submission could not be confirmed yet. Retry submission once; your uploaded files remain reserved.'
+      : data.error);
+  }
+  if (error) throw new Error('Final Delivery submission could not be confirmed.');
   if (!isRecord(data) || data.status !== 'AWAITING_CLIENT_REVIEW') {
     throw new Error('Final Delivery submission could not be confirmed.');
   }

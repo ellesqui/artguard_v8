@@ -219,8 +219,8 @@ export function FinalDeliverySection({
         onNotice('Final Delivery submitted for Client review.');
       } else {
         setSubmissionError(error instanceof Error
-          ? `${error.message} Any incomplete upload remains hidden and will expire; previous delivery history is unchanged.`
-          : 'Final Delivery could not be submitted. Any incomplete upload remains hidden and will expire.');
+          ? `${error.message} Previous delivery history is unchanged.`
+          : 'Final Delivery could not be submitted. Previous delivery history is unchanged.');
         setRefreshVersion((version) => version + 1);
       }
     } finally {

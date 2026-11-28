@@ -120,6 +120,47 @@ async function getVerificationTargets(
   return getArray<UploadTarget>(data);
 }
 
+function permanentFinalizationError(message: string): boolean {
+  const permanentMarkers = [
+    'expired',
+    'not eligible',
+    'only the',
+    'approved',
+    'every reserved',
+    'verified file',
+    'manifest',
+    'metadata is invalid',
+    'already awaiting review',
+  ];
+  const normalized = message.toLowerCase();
+  return permanentMarkers.some((marker) => normalized.includes(marker));
+}
+
+function safeFinalizationLog(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}, stateError?: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): Record<string, string | undefined> {
+  return {
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+    ...(stateError ? {
+      state_error_code: stateError.code,
+      state_error_message: stateError.message,
+      state_error_details: stateError.details,
+      state_error_hint: stateError.hint,
+    } : {}),
+  };
+}
+
 async function cleanAbandonedUpload(
   admin: ReturnType<typeof getServiceClient>,
   deliveryId: string,
@@ -254,11 +295,18 @@ async function handleVerifySubmit(
       p_delivery_id: body.deliveryId,
       p_actor_id: actorId,
     });
+    console.error('Final Delivery finalization RPC failed.', safeFinalizationLog(error, stateError ?? undefined));
     const state = getArray<{ status: string; is_current: boolean }>(stateData)[0];
     if (!stateError && state?.status === 'AWAITING_CLIENT_REVIEW' && state.is_current) {
       return jsonResponse({ status: state.status }, 200, origin);
     }
     if (!stateError && state?.status === 'UPLOADING') {
+      if (!permanentFinalizationError(error.message)) {
+        return jsonResponse({
+          error: 'Submission could not be confirmed yet. Your files remain reserved; retry submission once.',
+          retryable: true,
+        }, 503, origin);
+      }
       const cleaned = await cleanAbandonedUpload(
         admin,
         body.deliveryId,

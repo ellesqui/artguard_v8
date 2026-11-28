@@ -373,6 +373,44 @@ test('Final Render approval, participant role checks, and protected Storage read
   }
 });
 
+test('PNG finalization succeeds with a reserved 244648-byte file and valid manifest', async () => {
+  const commissionId = await createCommission({
+    milestones: [{ name: 'Final Render', status: 'APPROVED' }],
+  });
+  const batch = await beginBatch(commissionId, [
+    { filename: 'final.png', mime_type: 'image/png', size_bytes: 244648 },
+  ]);
+  const fileId = batch.files[0].file_id;
+  await reserveObject(batch.delivery_id, fileId);
+
+  await finalizeManifest(batch.delivery_id, [{
+    file_id: fileId,
+    mime_type: 'image/png',
+    size_bytes: 244648,
+    sha256: 'a'.repeat(64),
+  }]);
+
+  const batchState = await database.query(
+    'select status, is_current from public.commission_final_deliveries where id = $1',
+    [batch.delivery_id],
+  );
+  assert.equal(batchState.rows[0].status, 'AWAITING_CLIENT_REVIEW');
+  assert.equal(batchState.rows[0].is_current, true);
+
+  const fileState = await database.query(
+    `select verification_status, verified_mime_type, file_size_bytes, sha256
+     from public.commission_final_delivery_files
+     where id = $1`,
+    [fileId],
+  );
+  assert.deepEqual(fileState.rows[0], {
+    verification_status: 'VERIFIED',
+    verified_mime_type: 'image/png',
+    file_size_bytes: 244648,
+    sha256: 'a'.repeat(64),
+  });
+});
+
 test('signed upload cutoff rejects the boundary while verification and finalization use reservation expiry', async () => {
   const commissionId = await createCommission();
   const batch = await beginBatch(commissionId);

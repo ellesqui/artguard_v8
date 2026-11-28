@@ -109,7 +109,7 @@ test('frontend service uses the migration RPCs and protected Edge Function actio
   assert.match(component, /maxLength=\{4000\}/);
   assert.match(component, /AWAITING_CLIENT_REVIEW/);
   assert.match(component, /REVISION_REQUESTED/);
-  assert.match(component, /previous delivery history is unchanged/);
+  assert.match(component, /previous delivery history is unchanged/i);
   assert.match(component, /multiple/);
 });
 
@@ -168,6 +168,20 @@ test('accepted payment copy is role-specific and only Clients receive the confir
   assert.doesNotMatch(page, /<div className="t-xs c-low workspace-action-note">Payment is required before work can begin/);
   assert.doesNotMatch(page, /Simulated Payment Confirmation Needed/);
   assert.doesNotMatch(page, /Confirm Simulated Payment/);
+});
+
+test('Final Delivery submission errors are clear and do not claim expiry or expose SQL', async () => {
+  const storageClient = await readFile(new URL('../src/lib/supabaseFinalDeliveries.ts', import.meta.url), 'utf8');
+  const section = await readFile(new URL('../src/components/commission/FinalDeliverySection.tsx', import.meta.url), 'utf8');
+
+  assert.match(storageClient, /Submission could not be confirmed yet/);
+  assert.match(storageClient, /Retry submission once/);
+  const verifySubmitStart = storageClient.indexOf('export async function verifyAndSubmitFinalDelivery');
+  const verifySubmitEnd = storageClient.indexOf('export async function acceptFinalDelivery', verifySubmitStart);
+  const verifySubmit = storageClient.slice(verifySubmitStart, verifySubmitEnd);
+  assert.doesNotMatch(verifySubmit, /throw\s+error;/);
+  assert.match(section, /Previous delivery history is unchanged/);
+  assert.doesNotMatch(section, /will expire/);
 });
 
 test('status freshness and modal keyboard handling use safe focus and dismiss rules', async () => {

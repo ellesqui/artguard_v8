@@ -134,6 +134,17 @@ test('activation preserves owner and execute ACL for both RPCs', () => {
   }
 });
 
+test('Finalization failures log safe RPC diagnostics and preserve retryable uploads', () => {
+  assert.match(storageFunction, /console\.error\('Final Delivery finalization RPC failed\.', safeFinalizationLog/i);
+  assert.match(storageFunction, /error\.code/);
+  assert.match(storageFunction, /error\.message/);
+  assert.match(storageFunction, /error\.details/);
+  assert.match(storageFunction, /error\.hint/);
+  assert.match(storageFunction, /state_error_code/);
+  assert.match(storageFunction, /retryable:\s*true/);
+  assert.doesNotMatch(storageFunction, /console\.error\([^;]*(?:authorization|signed_url|signedUrl|token|sha256)/i);
+});
+
 test('Final Render, Storage, and completion safeguards remain in foundation', () => {
   const normalizedFoundation = foundationSql.replace(/\s+/g, ' ');
   const approval = functionBody(foundationSql, 'is_final_render_approved');
