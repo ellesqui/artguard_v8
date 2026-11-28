@@ -15,7 +15,7 @@ import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, initialsFor, usernameFromEmail, type PublicProfile } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { isVerifiedArtistStatus } from '../types/auth';
-import { readCoverPhotoDataUrl } from '../lib/profileCoverPhoto';
+import { validateCoverPhotoFile } from '../lib/profileCoverPhoto';
 import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import { createPublicPortfolioSignedUrl, listPublicArtistArtworks, type PublicArtworkRecord } from '../lib/supabaseArtworks';
 import { listArtistReviews, type ArtistReview } from '../lib/supabaseReviews';
@@ -44,6 +44,11 @@ import {
   type CommissionPostComment,
   type OwnerCommissionPostApplication,
 } from '../lib/supabaseCommissionPosts';
+import {
+  createProfileCoverSignedUrl,
+  deleteProfileCoverObject,
+  uploadProfileCoverObject,
+} from '../lib/supabaseProfileCovers';
 import { ProtectedArtworkDisplay } from '../components/ui/ProtectedArtworkDisplay';
 import { ProfileAvatar } from '../components/ui/ProfileAvatar';
 import './MarketplacePage.css';
@@ -55,7 +60,6 @@ interface ArtistProfileView {
   initials: string;
   avatarStyle: CSSProperties;
   avatarDataUrl?: string | null;
-  coverDataUrl?: string | null;
   tags: string[];
   bio: string;
   verified: boolean;
@@ -86,16 +90,18 @@ function formatArtistPostBudget(post: CommissionPost): string {
 export function ArtistProfilePage() {
   const { artistId } = useParams<{ artistId?: string }>();
   const navigate = useNavigate();
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfileCoverImagePath } = useAuth();
   const { startConversation } = useChat();
   const { toast, showToast } = useMockToast();
   const [reportTarget, setReportTarget] = useState<ReportSubmissionTarget | null>(null);
   const [startingConversation, setStartingConversation] = useState(false);
   const [messageError, setMessageError] = useState<string>();
   const coverFileInputRef = useRef<HTMLInputElement>(null);
-  const [coverDraft, setCoverDraft] = useState<string>();
+  const [coverDraft, setCoverDraft] = useState<{ file: File; previewUrl: string }>();
+  const [savedCoverUrl, setSavedCoverUrl] = useState<string>();
   const [coverSaving, setCoverSaving] = useState(false);
   const [coverError, setCoverError] = useState<string>();
+  const [coverLoadError, setCoverLoadError] = useState<string>();
   const [loadedCoverUrl, setLoadedCoverUrl] = useState<string>();
 
   const isSelf = !artistId;
@@ -103,6 +109,7 @@ export function ArtistProfilePage() {
   const publicArtist = artistId ? ARTISTS.find((a) => a.id === artistId) : undefined;
   const [realProfile, setRealProfile] = useState<PublicProfile | null>(null);
   const isViewingOwnProfile = isSelf || Boolean(user && realProfile?.id === user.id);
+  const coverImagePath = realProfile?.cover_image_path ?? (isRealSelf ? user?.coverImagePath : undefined);
   const [realProfileLoading, setRealProfileLoading] = useState(Boolean((artistId && !publicArtist) || isRealSelf));
   const [realProfileError, setRealProfileError] = useState<string | undefined>();
   const [realPortfolio, setRealPortfolio] = useState<PublicArtworkRecord[]>([]);
@@ -156,6 +163,11 @@ export function ArtistProfilePage() {
   const [reviewsDialogOpen, setReviewsDialogOpen] = useState(false);
 
   useEffect(() => {
+    if (!coverDraft) return;
+    return () => URL.revokeObjectURL(coverDraft.previewUrl);
+  }, [coverDraft]);
+
+  useEffect(() => {
     const profileId = artistId ?? (isRealSelf ? user?.id : undefined);
     if (!profileId || publicArtist || !isSupabaseConfigured) {
       setRealProfile(null);
@@ -166,7 +178,7 @@ export function ArtistProfilePage() {
     setRealProfile(null);
     setRealProfileLoading(true);
     setRealProfileError(undefined);
-    getPublicProfile(profileId)
+    getPublicProfile(profileId, true)
       .then((profile) => {
         if (!active) return;
         if (profile?.role === 'artist') setRealProfile(profile);
@@ -182,6 +194,33 @@ export function ArtistProfilePage() {
       active = false;
     };
   }, [artistId, isRealSelf, publicArtist, user?.id]);
+
+  useEffect(() => {
+    if (!coverImagePath || !isSupabaseConfigured) {
+      setSavedCoverUrl(undefined);
+      setCoverLoadError(undefined);
+      return;
+    }
+
+    let active = true;
+    setSavedCoverUrl(undefined);
+    setCoverLoadError(undefined);
+    void createProfileCoverSignedUrl(coverImagePath)
+      .then((url) => {
+        if (active) {
+          setSavedCoverUrl(url);
+          setCoverLoadError(undefined);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error('ArtGuard: artist cover photo could not be loaded.', error);
+        setCoverLoadError('Cover photo could not be loaded.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [coverImagePath]);
 
   useEffect(() => {
     if (!realProfile || realProfile.role !== 'artist' || !isSupabaseConfigured) {
@@ -361,7 +400,6 @@ export function ArtistProfilePage() {
         initials: realProfile!.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join(''),
         avatarStyle: {},
         avatarDataUrl: realProfile!.avatar_data_url,
-        coverDataUrl: realProfile!.cover_data_url,
         tags: realProfile!.interests ?? [],
         bio: realProfile!.bio ?? '',
         verified: isVerifiedArtistStatus(realProfile!.artist_verification_status),
@@ -378,7 +416,6 @@ export function ArtistProfilePage() {
         initials: (user?.name || CURRENT_ARTIST.fullName).slice(0, 1).toUpperCase(),
         avatarStyle: {},
         avatarDataUrl: user?.avatarDataUrl,
-        coverDataUrl: user?.coverDataUrl,
         tags: user?.interests && user.interests.length > 0 ? user.interests : CURRENT_ARTIST.tags,
         rating: CURRENT_ARTIST.rating,
         reviewCount: CURRENT_ARTIST.reviewCount,
@@ -400,7 +437,6 @@ export function ArtistProfilePage() {
           initials: realProfile!.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join(''),
           avatarStyle: {},
           avatarDataUrl: realProfile!.avatar_data_url,
-          coverDataUrl: realProfile!.cover_data_url,
           tags: realProfile!.interests ?? [],
           bio: realProfile!.bio ?? '',
           verified: isVerifiedArtistStatus(realProfile!.artist_verification_status),
@@ -411,10 +447,8 @@ export function ArtistProfilePage() {
           source: 'supabase' as const,
         };
 
-    const coverUrl = isViewingOwnProfile && coverDraft
-      ? coverDraft
-      : profile.coverDataUrl ?? null;
-    const canChangeCover = isViewingOwnProfile;
+    const coverUrl = coverDraft?.previewUrl ?? savedCoverUrl ?? null;
+    const canChangeCover = isViewingOwnProfile && isSupabaseConfigured && user?.role === 'artist';
     const reviewAverage = artistReviews.length > 0
       ? artistReviews.reduce((total, review) => total + review.rating, 0) / artistReviews.length
       : null;
@@ -752,10 +786,11 @@ export function ArtistProfilePage() {
     if (!file) return;
     setCoverError(undefined);
     try {
-      setCoverDraft(await readCoverPhotoDataUrl(file));
+      validateCoverPhotoFile(file);
+      setCoverDraft({ file, previewUrl: URL.createObjectURL(file) });
       setLoadedCoverUrl(undefined);
     } catch (error) {
-      setCoverError(error instanceof Error ? error.message : 'Could not read that cover photo.');
+      setCoverError(error instanceof Error ? error.message : 'Could not preview that cover photo.');
     }
   };
 
@@ -763,19 +798,42 @@ export function ArtistProfilePage() {
     if (!coverDraft || !user || !canChangeCover || coverSaving) return;
     setCoverSaving(true);
     setCoverError(undefined);
+    let uploadedPath: string | undefined;
+    let profileUpdated = false;
+    const previousPath = realProfile?.cover_image_path ?? user.coverImagePath;
     try {
-      const savedCover = coverDraft;
-      const result = await updateProfile({ coverDataUrl: savedCover });
+      uploadedPath = await uploadProfileCoverObject(user.id, coverDraft.file);
+      const result = await updateProfileCoverImagePath(uploadedPath);
       if (!result.success) {
-        setCoverError(result.error ?? 'Could not save your cover photo.');
-        return;
+        throw new Error(result.error ?? 'Could not save your cover photo.');
       }
+      profileUpdated = true;
       setRealProfile((current) => current?.id === user.id
-        ? { ...current, cover_data_url: savedCover }
+        ? { ...current, cover_image_path: uploadedPath }
         : current);
+      const signedUrl = await createProfileCoverSignedUrl(uploadedPath);
+      setSavedCoverUrl(signedUrl);
+      setLoadedCoverUrl(undefined);
       setCoverDraft(undefined);
-      showToast('Cover photo updated');
+      if (previousPath && previousPath !== uploadedPath) {
+        try {
+          await deleteProfileCoverObject(previousPath, user.id);
+          showToast('Cover photo updated');
+        } catch (cleanupError) {
+          console.error('ArtGuard: previous artist cover could not be removed.', cleanupError);
+          showToast('Cover updated, but the previous image could not be removed.');
+        }
+      } else {
+        showToast('Cover photo updated');
+      }
     } catch (error) {
+      if (uploadedPath && !profileUpdated) {
+        try {
+          await deleteProfileCoverObject(uploadedPath, user.id);
+        } catch (cleanupError) {
+          console.error('ArtGuard: unsaved artist cover could not be removed.', cleanupError);
+        }
+      }
       setCoverError(error instanceof Error ? error.message : 'Could not save your cover photo.');
     } finally {
       setCoverSaving(false);
@@ -826,9 +884,14 @@ export function ArtistProfilePage() {
                 className={`profile-cover-image${loadedCoverUrl === coverUrl ? ' is-loaded' : ''}`}
                 src={coverUrl}
                 alt=""
-                onLoad={() => setLoadedCoverUrl(coverUrl)}
+                onLoad={() => {
+                  setLoadedCoverUrl(coverUrl);
+                  setCoverLoadError(undefined);
+                }}
+                onError={() => setCoverLoadError('Cover photo could not be loaded.')}
               />
             )}
+            {coverLoadError && <div className="artist-profile-cover-load-error" role="status">{coverLoadError}</div>}
           </div>
           {canChangeCover && (
             <>

@@ -15,7 +15,7 @@ export interface AuthUser {
   bio?: string;
   interests?: string[];
   avatarDataUrl?: string;
-  coverDataUrl?: string;
+  coverImagePath?: string;
   onboarded?: boolean;
   isPro?: boolean;
   lastSeenAt?: string;

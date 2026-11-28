@@ -22,7 +22,7 @@ const SESSION_KEY = 'artguard.session';
 const MOCK_LATENCY_MS = 650;
 const MOCK_PASSWORD_HASH_ITERATIONS = 600_000;
 const MOCK_PASSWORD_SALT_BYTES = 16;
-type ProfileUpdatePatch = Partial<Omit<AuthUser, 'isPro'>>;
+type ProfileUpdatePatch = Partial<Omit<AuthUser, 'isPro' | 'coverImagePath'>>;
 type AuthOperation = 'login' | 'signup' | 'oauth';
 type AuthenticatedDestination = '/home' | '/onboarding/name' | '/onboarding/interests';
 const GOOGLE_SIGNUP_INTENT_KEY = 'artguard.googleSignupIntent';
@@ -368,6 +368,7 @@ interface AuthContextValue {
   passwordRecoverySession: boolean;
   clearPasswordRecoverySession: () => void;
   updateProfile: (patch: ProfileUpdatePatch) => Promise<AuthResult>;
+  updateProfileCoverImagePath: (path: string) => Promise<AuthResult>;
   enableMockPremium: () => Promise<AuthResult>;
   logout: () => void;
 }
@@ -443,7 +444,7 @@ async function publicUserFromSession(
     bio: profile?.bio ?? undefined,
     interests: profile?.interests ?? undefined,
     avatarDataUrl: profile?.avatar_data_url ?? undefined,
-    coverDataUrl: profile?.cover_data_url ?? undefined,
+    coverImagePath: profile?.cover_image_path ?? undefined,
     onboarded: Boolean(profile?.onboarded ?? fallback.onboarded),
     isPro: Boolean(profile?.is_pro),
     lastSeenAt: profile?.last_seen_at ?? undefined,
@@ -470,7 +471,7 @@ async function refreshProfileForUser(userId: string, fallback: AuthUser): Promis
           bio: profile.bio ?? undefined,
           interests: profile.interests ?? undefined,
           avatarDataUrl: profile.avatar_data_url ?? undefined,
-          coverDataUrl: profile.cover_data_url ?? undefined,
+          coverImagePath: profile.cover_image_path ?? undefined,
           onboarded: Boolean(profile.onboarded),
           isPro: Boolean(profile.is_pro),
           lastSeenAt: profile.last_seen_at ?? undefined,
@@ -799,7 +800,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             bio: profile.bio ?? undefined,
             interests: profile.interests ?? undefined,
             avatarDataUrl: profile.avatar_data_url ?? undefined,
-            coverDataUrl: profile.cover_data_url ?? undefined,
+            coverImagePath: profile.cover_image_path ?? undefined,
             onboarded: Boolean(profile.onboarded),
             isPro: Boolean(profile.is_pro),
           };
@@ -1225,7 +1226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bio: profile.bio ?? undefined,
         interests: profile.interests ?? undefined,
         avatarDataUrl: profile.avatar_data_url ?? undefined,
-        coverDataUrl: profile.cover_data_url ?? undefined,
+        coverImagePath: profile.cover_image_path ?? undefined,
         onboarded: Boolean(profile.onboarded),
         isPro: Boolean(profile.is_pro),
         lastSeenAt: profile.last_seen_at ?? undefined,
@@ -1417,7 +1418,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bio: profile.bio ?? undefined,
         interests: profile.interests ?? undefined,
         avatarDataUrl: profile.avatar_data_url ?? undefined,
-        coverDataUrl: profile.cover_data_url ?? undefined,
+        coverImagePath: profile.cover_image_path ?? undefined,
         onboarded: Boolean(profile.onboarded),
         isPro: Boolean(profile.is_pro),
         lastSeenAt: profile.last_seen_at ?? undefined,
@@ -1524,7 +1525,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       bio: patch.bio,
       interests: patch.interests,
       avatar_data_url: patch.avatarDataUrl,
-      cover_data_url: patch.coverDataUrl,
       onboarded: patch.onboarded,
     };
     const { error } = await supabase.from('profiles').update(dbPatch).eq('id', user.id);
@@ -1541,6 +1541,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     delete realPatch.isPro;
     const refreshed = { ...user, ...realPatch };
     persistSession(refreshed);
+    return { success: true };
+  }, [persistSession, user]);
+
+  const updateProfileCoverImagePath = useCallback(async (path: string) => {
+    if (!user) return { success: false, error: 'Not signed in.' };
+    if (user.role !== 'artist' || !path.startsWith(`${user.id}/`)) {
+      return { success: false, error: 'Only the profile owner can save an artist cover photo.' };
+    }
+    if (!isSupabaseConfigured || !supabase) {
+      return { success: false, error: 'Cover photos require a connected profile.' };
+    }
+
+    const { data, error } = await supabase.from('profiles')
+      .update({ cover_image_path: path })
+      .eq('id', user.id)
+      .select('id')
+      .maybeSingle();
+    if (error) return { success: false, error: error.message };
+    if (!data) return { success: false, error: 'Artist profile could not be updated.' };
+    persistSession({ ...user, coverImagePath: path });
     return { success: true };
   }, [persistSession, user]);
 
@@ -1655,10 +1675,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       passwordRecoverySession,
       clearPasswordRecoverySession,
       updateProfile,
+      updateProfileCoverImagePath,
       enableMockPremium,
       logout,
     }),
-    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, resendSignupConfirmation, completeEmailConfirmation, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, enableMockPremium, logout],
+    [user, initializing, sessionRecoveryError, retrySessionRecovery, login, signUp, resendSignupConfirmation, completeEmailConfirmation, completeExistingGoogleLogin, completeExistingGoogleEmailLogin, startGoogleSignIn, completeGoogleSignIn, changeEmail, deactivateAccount, requestAccountDeletion, requestPasswordReset, passwordRecoverySession, clearPasswordRecoverySession, updateProfile, updateProfileCoverImagePath, enableMockPremium, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

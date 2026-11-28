@@ -20,7 +20,6 @@ import type { CommissionRequest } from '../data/mockData';
 import { useMockToast } from '../components/ui/MockToast';
 import { getPublicProfile, usernameFromEmail } from '../lib/supabaseData';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { readCoverPhotoDataUrl } from '../lib/profileCoverPhoto';
 import { getUtcDateInputValue, validateOptionalTargetDeadline } from '../lib/commissionDeadline';
 import './MarketplacePage.css';
 import './ClientProfilePage.css';
@@ -96,7 +95,7 @@ function formatCommissionAmount(commission: MyCommission): string | null {
 export function ClientProfilePage() {
   const { clientId } = useParams<{ clientId?: string }>();
   const navigate = useNavigate();
-  const { user, updateProfile } = useAuth();
+  const { user } = useAuth();
   const { startConversation } = useChat();
   const { toast, showToast } = useMockToast();
   const isRealClient = !clientId && isSupabaseConfigured && user?.role === 'client';
@@ -107,11 +106,6 @@ export function ClientProfilePage() {
   const [viewedClientLoading, setViewedClientLoading] = useState(Boolean(clientId));
   const [viewedClientError, setViewedClientError] = useState<string>();
   const [publicMessagePending, setPublicMessagePending] = useState(false);
-  const coverFileInputRef = useRef<HTMLInputElement>(null);
-  const [coverDraft, setCoverDraft] = useState<string>();
-  const [coverSaving, setCoverSaving] = useState(false);
-  const [coverError, setCoverError] = useState<string>();
-  const [loadedCoverUrl, setLoadedCoverUrl] = useState<string>();
   const [commentsForViewedClientPost, setCommentsForViewedClientPost] = useState<CommissionPost | null>(null);
   const [viewedClientPostComments, setViewedClientPostComments] = useState<CommissionPostComment[]>([]);
   const [viewedClientPostCommentsLoading, setViewedClientPostCommentsLoading] = useState(false);
@@ -221,40 +215,6 @@ export function ClientProfilePage() {
       && post.status !== 'SELECTED'
       && !deletedPublicPostIdsRef.current.ids.has(post.id),
   );
-
-  const handleCoverPhotoSelection = async (file?: File) => {
-    if (!file) return;
-    setCoverError(undefined);
-    try {
-      setCoverDraft(await readCoverPhotoDataUrl(file));
-      setLoadedCoverUrl(undefined);
-    } catch (error) {
-      setCoverError(error instanceof Error ? error.message : 'Could not read that cover photo.');
-    }
-  };
-
-  const saveCoverPhoto = async (ownerId?: string) => {
-    if (!coverDraft || !user || ownerId !== user.id || coverSaving) return;
-    setCoverSaving(true);
-    setCoverError(undefined);
-    try {
-      const savedCover = coverDraft;
-      const result = await updateProfile({ coverDataUrl: savedCover });
-      if (!result.success) {
-        setCoverError(result.error ?? 'Could not save your cover photo.');
-        return;
-      }
-      setViewedClient((current) => current?.id === user.id
-        ? { ...current, cover_data_url: savedCover }
-        : current);
-      setCoverDraft(undefined);
-      showToast('Cover photo updated');
-    } catch (error) {
-      setCoverError(error instanceof Error ? error.message : 'Could not save your cover photo.');
-    } finally {
-      setCoverSaving(false);
-    }
-  };
 
   const messageViewedClient = async () => {
     if (!viewedClient || viewedClient.id === user?.id || publicMessagePending) return;
@@ -647,9 +607,6 @@ export function ClientProfilePage() {
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join('');
     const viewedClientIsOwner = viewedClient.id === user?.id;
-    const viewedClientCoverUrl = viewedClientIsOwner && coverDraft
-      ? coverDraft
-      : viewedClient.cover_data_url ?? null;
     return (
       <ScreenShell
         header={
@@ -661,55 +618,6 @@ export function ClientProfilePage() {
         }
       >
         <section className="client-profile-identity-card" aria-label="Client profile">
-          <div className="client-profile-banner" aria-hidden="true">
-            {viewedClientCoverUrl && (
-              <img
-                key={viewedClientCoverUrl}
-                className={`profile-cover-image${loadedCoverUrl === viewedClientCoverUrl ? ' is-loaded' : ''}`}
-                src={viewedClientCoverUrl}
-                alt=""
-                onLoad={() => setLoadedCoverUrl(viewedClientCoverUrl)}
-              />
-            )}
-          </div>
-          {viewedClientIsOwner && (
-            <>
-              <input
-                ref={coverFileInputRef}
-                className="profile-cover-file-input"
-                type="file"
-                accept="image/png,image/jpeg"
-                aria-label="Select cover photo"
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = '';
-                  void handleCoverPhotoSelection(file);
-                }}
-              />
-              <div className="profile-cover-actions">
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
-                  <Icon name="image" />
-                  {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
-                </button>
-                {coverDraft && (
-                  <>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto(viewedClient.id)} disabled={coverSaving}>
-                      {coverSaving ? 'Saving…' : 'Save Cover'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
-                      disabled={coverSaving}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                )}
-              </div>
-              {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
-            </>
-          )}
           <div className="client-profile-identity-body">
             <ProfileAvatar
               className="avatar avatar-xl client-profile-avatar"
@@ -719,6 +627,7 @@ export function ClientProfilePage() {
             />
             <div className="client-profile-name">{viewedClient.name}</div>
             <div className="t-sm c-low client-profile-handle">@{viewedClient.username} · Client</div>
+            {viewedClient.bio && <p className="client-profile-bio">{viewedClient.bio}</p>}
             {viewedClientIsOwner && (
               <button type="button" className="btn btn-ghost btn-sm client-profile-edit-button" onClick={() => navigate('/profile/edit')}>
                 Edit Profile
@@ -726,12 +635,6 @@ export function ClientProfilePage() {
             )}
           </div>
         </section>
-
-        {viewedClient.bio && (
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="t-xs c-mid" style={{ lineHeight: 1.65 }}>{viewedClient.bio}</div>
-          </div>
-        )}
 
         {!!viewedClient.interests?.length && (
           <div style={{ marginBottom: 20 }}>
@@ -929,7 +832,6 @@ export function ClientProfilePage() {
     );
   }
 
-  const ownCoverUrl = coverDraft ?? user?.coverDataUrl ?? null;
   return (
     <ScreenShell
       header={
@@ -941,55 +843,6 @@ export function ClientProfilePage() {
       footer={<BottomNav active="profile" />}
     >
       <section className="client-profile-identity-card" aria-label="Client profile">
-        <div className="client-profile-banner" aria-hidden="true">
-          {ownCoverUrl && (
-            <img
-              key={ownCoverUrl}
-              className={`profile-cover-image${loadedCoverUrl === ownCoverUrl ? ' is-loaded' : ''}`}
-              src={ownCoverUrl}
-              alt=""
-              onLoad={() => setLoadedCoverUrl(ownCoverUrl)}
-            />
-          )}
-        </div>
-        {user && (
-          <>
-            <input
-              ref={coverFileInputRef}
-              className="profile-cover-file-input"
-              type="file"
-              accept="image/png,image/jpeg"
-              aria-label="Select cover photo"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = '';
-                void handleCoverPhotoSelection(file);
-              }}
-            />
-            <div className="profile-cover-actions">
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => coverFileInputRef.current?.click()}>
-                <Icon name="image" />
-                {coverDraft ? 'Choose Another' : 'Change Cover Photo'}
-              </button>
-              {coverDraft && (
-                <>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => void saveCoverPhoto(user.id)} disabled={coverSaving}>
-                    {coverSaving ? 'Saving…' : 'Save Cover'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => { setCoverDraft(undefined); setCoverError(undefined); }}
-                    disabled={coverSaving}
-                  >
-                    Cancel
-                  </button>
-                </>
-              )}
-            </div>
-            {coverError && <div className="profile-cover-error" role="alert">{coverError}</div>}
-          </>
-        )}
         <div className="client-profile-identity-body">
           <ProfileAvatar
             className="avatar avatar-xl client-profile-avatar"
