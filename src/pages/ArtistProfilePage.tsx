@@ -463,32 +463,33 @@ export function ArtistProfilePage() {
       ? artistReviews
       : artistReviews.filter((review) => review.rating === reviewFilter);
     const reviewCards = (reviews: ArtistReview[]) => reviews.map((review) => (
-      <article className="card" key={review.review_id} style={{ padding: '14px 16px', minWidth: 0, overflowWrap: 'anywhere' }}>
-        <div className="row gap-10" style={{ alignItems: 'flex-start', minWidth: 0 }}>
+      <article className="card ag-liquid-glass-soft artist-review-card" key={review.review_id}>
+        <div className="artist-review-card-header">
           <ProfileAvatar
-            className="avatar avatar-sm"
+            className="avatar avatar-sm artist-review-avatar"
             ariaHidden
             imageUrl={review.reviewer_avatar_data_url}
             initials={initialsFor(review.reviewer_display_name || 'Client')}
-            style={{ flexShrink: 0 }}
           />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="row-between" style={{ alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="t-sm fw-700" style={{ overflowWrap: 'anywhere' }}>{review.reviewer_display_name || 'Client'}</div>
-                {review.reviewer_username && <div className="t-xs c-low" style={{ overflowWrap: 'anywhere' }}>@{review.reviewer_username}</div>}
+          <div className="artist-review-card-copy">
+            <div className="artist-review-card-meta">
+              <div className="artist-review-reviewer">
+                <div className="t-sm fw-700 artist-review-reviewer-name">{review.reviewer_display_name || 'Client'}</div>
+                {review.reviewer_username && <div className="t-xs c-low artist-review-reviewer-username">@{review.reviewer_username}</div>}
               </div>
-              <time className="t-xs c-low" dateTime={review.created_at} style={{ flexShrink: 0 }}>
+              <time className="t-xs c-low artist-review-date" dateTime={review.created_at}>
                 {new Date(review.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
                 {review.edited_at && <span> · Edited</span>}
               </time>
             </div>
-            <div className="row gap-4" aria-label={`Rating: ${review.rating} out of 5`} style={{ marginTop: 7 }}>
+            <div className="artist-review-card-stars" role="img" aria-label={`Rating: ${review.rating} out of 5`}>
               {[1, 2, 3, 4, 5].map((rating) => (
-                <Icon key={rating} name="star" style={{ width: 13, height: 13, stroke: 'none', fill: rating <= review.rating ? 'var(--ag-amber)' : 'var(--ag-border)' }} />
+                <span className={`artist-review-card-star${rating <= review.rating ? ' is-filled' : ' is-empty'}`} key={rating}>
+                  <Icon name="star" />
+                </span>
               ))}
             </div>
-            <div className="t-sm c-mid" style={{ marginTop: 8, lineHeight: 1.55, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{review.review_text}</div>
+            <div className="t-sm c-mid artist-review-comment">{review.review_text}</div>
           </div>
         </div>
       </article>
@@ -1224,29 +1225,33 @@ export function ArtistProfilePage() {
         {profile.source === 'supabase' && reviewsDialogOpen && (
           <div className="account-dialog-backdrop artist-reviews-backdrop" role="presentation" onClick={() => setReviewsDialogOpen(false)}>
             <section
-              className="account-dialog artist-reviews-dialog"
+              className="account-dialog card ag-liquid-glass artist-reviews-dialog"
               role="dialog"
               aria-modal="true"
               aria-labelledby="artist-reviews-dialog-title"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="row-between artist-reviews-dialog-header">
-                <h2 id="artist-reviews-dialog-title" className="section-title">Reviews</h2>
+                <div className="artist-reviews-dialog-heading">
+                  <h2 id="artist-reviews-dialog-title" className="section-title">Reviews</h2>
+                  {!reviewsLoading && !reviewsError && reviewAverage !== null && (
+                    <div className="artist-review-summary">
+                      <strong>{reviewAverage.toFixed(1)}</strong>
+                      <span className="artist-review-summary-stars" role="img" aria-label={`${reviewAverage.toFixed(1)} out of 5 stars`}>
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Icon key={star} name="star" />
+                        ))}
+                      </span>
+                      <span className="artist-review-summary-count">{artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
+                    </div>
+                  )}
+                </div>
                 <button type="button" className="icon-btn" onClick={() => setReviewsDialogOpen(false)} aria-label="Close reviews">
                   <Icon name="x" />
                 </button>
               </div>
               {!reviewsLoading && !reviewsError && artistReviews.length > 0 && (
                 <>
-                  <div className="artist-review-summary">
-                    <strong>{reviewAverage?.toFixed(1)}</strong>
-                    <span className="artist-review-summary-stars" aria-label="5-star scale">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <Icon key={star} name="star" />
-                      ))}
-                    </span>
-                    <span className="t-xs c-low">{artistReviews.length} {artistReviews.length === 1 ? 'review' : 'reviews'}</span>
-                  </div>
                   <div className="artist-review-distribution" aria-label="Rating distribution">
                     {reviewDistribution.map(({ rating, count }) => (
                       <div className="artist-review-distribution-row" key={rating}>
@@ -1286,9 +1291,9 @@ export function ArtistProfilePage() {
               ) : reviewsError ? (
                 <div className="t-sm c-danger" role="alert">Could not load reviews.</div>
               ) : artistReviews.length === 0 ? (
-                <div className="t-sm c-mid artist-reviews-empty">No reviews yet.</div>
+                <div className="t-sm c-mid artist-reviews-empty" role="status">No reviews yet.</div>
               ) : filteredReviews.length === 0 ? (
-                <div className="t-sm c-mid artist-reviews-empty">No reviews match this rating.</div>
+                <div className="t-sm c-mid artist-reviews-empty" role="status">No reviews match this rating.</div>
               ) : (
                 <div className="artist-reviews-list">
                   {reviewCards(filteredReviews)}

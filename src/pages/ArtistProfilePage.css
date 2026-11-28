@@ -259,56 +259,84 @@
   z-index: 35;
 }
 
-.artist-reviews-dialog {
+.account-dialog.artist-reviews-dialog {
   display: flex;
   flex-direction: column;
-  width: min(100%, 680px);
+  width: min(calc(100vw - 32px), 680px);
+  max-width: 680px;
   max-height: calc(100dvh - 40px - var(--ag-bottom-nav-space, 0px));
   overflow: hidden;
   padding: 20px;
 }
 
 .artist-reviews-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   flex: 0 0 auto;
   gap: 12px;
   margin-bottom: 14px;
 }
 
-.artist-reviews-dialog-header .section-title {
+.artist-reviews-dialog-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.artist-reviews-dialog-heading .section-title {
   margin: 0;
 }
 
 .artist-review-summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 12px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--ag-glass-border);
   border-radius: 12px;
-  background: var(--ag-surface-2);
+  background: var(--ag-glass-soft-bg);
+  box-shadow: inset 0 1px 0 var(--ag-glass-edge);
 }
 
 .artist-review-summary > strong {
   color: var(--ag-text-hi);
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
 }
 
 .artist-review-summary-stars {
   display: flex;
-  gap: 2px;
+  flex: 0 0 auto;
+  gap: 1px;
 }
 
 .artist-review-summary-stars .icon {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   stroke: none;
   fill: var(--ag-amber);
+}
+
+.artist-review-summary-count {
+  color: var(--ag-text-mid);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .artist-review-distribution {
   display: grid;
   gap: 6px;
-  margin: 12px 0;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ag-glass-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ag-glass-soft-bg) 78%, transparent);
 }
 
 .artist-review-distribution-row {
@@ -324,7 +352,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 99px;
-  background: var(--ag-border-soft);
+  background: color-mix(in srgb, var(--ag-text-low) 20%, transparent);
 }
 
 .artist-review-distribution-track > span {
@@ -335,34 +363,49 @@
 }
 
 .artist-review-filters {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 6px;
   flex: 0 0 auto;
   margin-bottom: 12px;
 }
 
 .artist-review-filters button {
+  min-width: 0;
   min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid var(--ag-border-soft);
+  padding: 6px 8px;
+  border: 1px solid var(--ag-glass-border);
   border-radius: 999px;
-  background: var(--ag-surface-2);
+  background: var(--ag-glass-soft-bg);
   color: var(--ag-text-mid);
   font: inherit;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
+  transition: color var(--ag-transition-fast), background var(--ag-transition-fast), border-color var(--ag-transition-fast), transform var(--ag-transition-fast);
+}
+
+.artist-review-filters button:hover:not(.is-active) {
+  border-color: color-mix(in srgb, var(--ag-accent) 38%, var(--ag-glass-border));
+  background: color-mix(in srgb, var(--ag-accent) 6%, var(--ag-glass-soft-bg));
+  color: var(--ag-text-hi);
 }
 
 .artist-review-filters button.is-active {
-  border-color: var(--ag-accent);
-  background: color-mix(in srgb, var(--ag-accent) 14%, var(--ag-surface));
+  border-color: color-mix(in srgb, var(--ag-accent) 54%, var(--ag-glass-border));
+  background: color-mix(in srgb, var(--ag-accent) 15%, var(--ag-glass-soft-bg));
   color: var(--ag-text-hi);
+  box-shadow: inset 0 1px 0 var(--ag-glass-edge);
+}
+
+.artist-review-filters button:active {
+  transform: scale(0.98);
 }
 
 .artist-reviews-list {
   display: flex;
   min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
@@ -370,8 +413,107 @@
   padding: 1px 4px 1px 1px;
 }
 
+.artist-review-card {
+  width: 100%;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  overflow-wrap: anywhere;
+}
+
+.artist-review-card-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.artist-review-avatar {
+  flex: 0 0 auto;
+  border: 1px solid var(--ag-glass-border);
+  box-shadow: 0 2px 8px rgba(4, 14, 32, 0.12);
+}
+
+.artist-review-card-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.artist-review-card-meta {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.artist-review-reviewer {
+  min-width: 0;
+}
+
+.artist-review-reviewer-name,
+.artist-review-reviewer-username {
+  overflow-wrap: anywhere;
+}
+
+.artist-review-date {
+  flex: 0 1 auto;
+  text-align: right;
+}
+
+.artist-review-card-stars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.artist-review-card-star {
+  display: inline-flex;
+}
+
+.artist-review-card-star .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.artist-review-card-star.is-filled .icon {
+  stroke: none;
+  fill: var(--ag-amber);
+}
+
+.artist-review-card-star.is-empty .icon {
+  stroke: color-mix(in srgb, var(--ag-text-low) 54%, transparent);
+  stroke-width: 1.5;
+  fill: transparent;
+}
+
+.artist-review-comment {
+  margin-top: 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .artist-reviews-empty {
-  padding: 18px 4px;
+  padding: 18px 16px;
+  border: 1px solid var(--ag-glass-border);
+  border-radius: 16px;
+  background: var(--ag-glass-soft-bg);
+  box-shadow: inset 0 1px 0 var(--ag-glass-edge);
+  text-align: center;
+}
+
+@media (hover: hover) {
+  .artist-review-card {
+    transition: transform var(--ag-transition-fast), border-color var(--ag-transition-fast);
+  }
+
+  .artist-review-card:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--ag-accent) 28%, var(--ag-glass-border));
+  }
 }
 
 .artist-public-posts {
@@ -557,8 +699,8 @@
     flex: 1 1 140px;
   }
 
-  .artist-reviews-dialog {
-    width: 100%;
+  .account-dialog.artist-reviews-dialog {
+    width: min(calc(100vw - 24px), 680px);
     max-height: calc(100dvh - 24px - var(--ag-bottom-nav-space, 0px));
     padding: 16px;
   }
