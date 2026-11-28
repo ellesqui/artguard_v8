@@ -180,6 +180,9 @@ test('Final Delivery submission errors are clear and do not claim expiry or expo
   const verifySubmitEnd = storageClient.indexOf('export async function acceptFinalDelivery', verifySubmitStart);
   const verifySubmit = storageClient.slice(verifySubmitStart, verifySubmitEnd);
   assert.doesNotMatch(verifySubmit, /throw\s+error;/);
+  assert.match(section, /pendingDeliveryId/);
+  assert.match(section, /Retry Final Delivery verification/);
+  assert.match(section, /verifyAndSubmitFinalDelivery\(pendingDeliveryId\)/);
   assert.match(section, /Previous delivery history is unchanged/);
   assert.doesNotMatch(section, /will expire/);
 });

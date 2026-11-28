@@ -96,6 +96,7 @@ export function FinalDeliverySection({
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [submissionStage, setSubmissionStage] = useState<FinalDeliverySubmissionStage>('idle');
   const [submissionError, setSubmissionError] = useState<string>();
+  const [pendingDeliveryId, setPendingDeliveryId] = useState<string>();
   const [revisionReason, setRevisionReason] = useState('');
   const [reviewActionDeliveryId, setReviewActionDeliveryId] = useState<string>();
   const [fileActionId, setFileActionId] = useState<string>();
@@ -186,6 +187,7 @@ export function FinalDeliverySection({
     try {
       const reservation = await beginFinalDelivery(commissionId, files);
       deliveryId = reservation.delivery_id;
+      setPendingDeliveryId(deliveryId);
       if (reservation.files.length !== files.length) {
         throw new Error('Final Delivery did not reserve every selected file.');
       }
@@ -215,6 +217,7 @@ export function FinalDeliverySection({
       setSubmissionStage('idle');
       if (acceptedByServer) {
         setSubmissionError(undefined);
+        setPendingDeliveryId(undefined);
         setRefreshVersion((version) => version + 1);
         onNotice('Final Delivery submitted for Client review.');
       } else {
@@ -223,6 +226,27 @@ export function FinalDeliverySection({
           : 'Final Delivery could not be submitted. Previous delivery history is unchanged.');
         setRefreshVersion((version) => version + 1);
       }
+    } finally {
+      uploadLock.current = false;
+    }
+  };
+
+  const handleRetryVerification = async () => {
+    if (!pendingDeliveryId || uploadLock.current || !canUpload) return;
+    uploadLock.current = true;
+    setSubmissionError(undefined);
+    setSubmissionStage('verifying');
+    try {
+      await verifyAndSubmitFinalDelivery(pendingDeliveryId);
+      setPendingDeliveryId(undefined);
+      setSubmissionStage('idle');
+      setRefreshVersion((version) => version + 1);
+      onNotice('Final Delivery submitted for Client review.');
+    } catch (error) {
+      setSubmissionError(error instanceof Error
+        ? `${error.message} Previous delivery history is unchanged.`
+        : 'Final Delivery could not be submitted. Previous delivery history is unchanged.');
+      setSubmissionStage('idle');
     } finally {
       uploadLock.current = false;
     }
@@ -347,6 +371,16 @@ export function FinalDeliverySection({
             </div>
           )}
           {submissionError && <div className="t-xs c-danger" role="alert">{submissionError}</div>}
+          {pendingDeliveryId && submissionStage === 'idle' && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => void handleRetryVerification()}
+              disabled={!canUpload || historyLoading}
+            >
+              Retry Final Delivery verification
+            </button>
+          )}
         </div>
       )}
 

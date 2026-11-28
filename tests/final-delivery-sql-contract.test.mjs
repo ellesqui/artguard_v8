@@ -134,6 +134,19 @@ test('activation preserves owner and execute ACL for both RPCs', () => {
   }
 });
 
+test('forward migration changes only service-role JWT claim detection', async () => {
+  const migration = await readFile(new URL('../supabase/migrations/20261128083209_guard_account_write_modern_jwt_claim.sql', import.meta.url), 'utf8');
+  assert.match(migration, /create or replace function public\.guard_account_write\(\)/i);
+  assert.match(migration, /v_role text := coalesce\([\s\S]*nullif\(current_setting\('request\.jwt\.claim\.role', true\), ''\)[\s\S]*nullif\(current_setting\('request\.jwt\.claims', true\), ''\)::jsonb ->> 'role'/i);
+  assert.match(migration, /if v_user_id is null then[\s\S]*v_role = 'service_role'/i);
+  assert.match(migration, /alter function public\.guard_account_write\(\) owner to postgres/i);
+  assert.match(migration, /revoke all on function public\.guard_account_write\(\) from public, anon, authenticated/i);
+  assert.match(migration, /v_status is distinct from 'ACTIVE'/i);
+  assert.match(migration, /PENDING', 'IN_REVIEW', 'APPROVED/i);
+  assert.match(migration, /if v_user_id is null[\s\S]*raise exception using[\s\S]*errcode = '42501'[\s\S]*message = 'Not authenticated'/i);
+  assert.match(migration, /tg_op = 'DELETE'[\s\S]*return old[\s\S]*return new/i);
+});
+
 test('Finalization failures log safe RPC diagnostics and preserve retryable uploads', () => {
   assert.match(storageFunction, /console\.error\('Final Delivery finalization RPC failed\.', safeFinalizationLog/i);
   assert.match(storageFunction, /error\.code/);
