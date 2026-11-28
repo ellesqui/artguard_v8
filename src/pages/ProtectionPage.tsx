@@ -593,7 +593,7 @@ function ProtectionPageContent() {
         <section className="protected-artwork-detail" aria-label={`${preview.artwork.title} preview and details`}>
           <button type="button" className="protected-artwork-back" onClick={closeArtworkPreview}>
             <Icon name="chevron-l" />
-            Back to Protected Artworks
+            Back
           </button>
           <div className="protected-artwork-detail-header">
             <div>
