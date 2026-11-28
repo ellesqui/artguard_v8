@@ -57,10 +57,6 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatArtworkDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
 function protectionLabel(level: ArtworkRecord['protection_level']): string {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
@@ -88,6 +84,7 @@ function ProtectionPageContent() {
   const { toast, showToast } = useMockToast();
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryScrollRef = useRef(0);
 
   const [toggles, setToggles] = useState<Record<string, boolean>>({
     cloaking: false,
@@ -115,7 +112,6 @@ function ProtectionPageContent() {
   const [previewError, setPreviewError] = useState<string | undefined>();
   const [preview, setPreview] = useState<{ artwork: ArtworkRecord; url: string } | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
-  const [previewUnavailableIds, setPreviewUnavailableIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [processingArtworkId, setProcessingArtworkId] = useState<string | null>(null);
   const [editingArtwork, setEditingArtwork] = useState<{ id: string; title: string; description: string; error?: string } | null>(null);
@@ -189,7 +185,6 @@ function ProtectionPageContent() {
 
     setArtworksLoading(true);
     setArtworksError(undefined);
-    setPreviewUnavailableIds(new Set());
     try {
       const records = await listMyArtworks(user.id);
       setArtworks(records);
@@ -204,9 +199,6 @@ function ProtectionPageContent() {
         }
       }));
       setPreviewUrls(Object.fromEntries(previewEntries.filter((entry): entry is readonly [string, string] => entry !== null)));
-      setPreviewUnavailableIds(new Set(records
-        .filter((artwork) => artwork.status === 'ready' && !previewEntries.some((entry) => entry?.[0] === artwork.id))
-        .map((artwork) => artwork.id)));
     } catch (error) {
       setArtworksError(error instanceof Error ? error.message : 'Could not load your protected artworks.');
       setArtworks([]);
@@ -267,7 +259,6 @@ function ProtectionPageContent() {
 
     setProcessingArtworkId(artwork.id);
     setSettingsError(undefined);
-    setPreviewUnavailableIds((current) => new Set(current).add(artwork.id));
     setPreviewUrls((current) => {
       const next = { ...current };
       delete next[artwork.id];
@@ -293,7 +284,6 @@ function ProtectionPageContent() {
     if (!user || processingArtworkId) return;
     setProcessingArtworkId(artwork.id);
     setArtworksError(undefined);
-    setPreviewUnavailableIds((current) => new Set(current).add(artwork.id));
     setPreviewUrls((current) => {
       const next = { ...current };
       delete next[artwork.id];
@@ -389,6 +379,7 @@ function ProtectionPageContent() {
   };
 
   const openArtwork = async (artwork: ArtworkRecord) => {
+    galleryScrollRef.current = window.scrollY;
     setPreviewError(undefined);
     setPreviewLoadingId(artwork.id);
     try {
@@ -402,6 +393,12 @@ function ProtectionPageContent() {
     }
   };
 
+  const closeArtworkPreview = () => {
+    setPreview(null);
+    setEditingArtwork(null);
+    window.requestAnimationFrame(() => window.scrollTo({ top: galleryScrollRef.current, behavior: 'auto' }));
+  };
+
   const handleDelete = async (artwork: ArtworkRecord) => {
     if (!user || deletingId) return;
     const confirmed = window.confirm(`Delete "${artwork.title}"? Its private storage file and artwork record will be removed.`);
@@ -411,7 +408,7 @@ function ProtectionPageContent() {
     setArtworksError(undefined);
     try {
       await deleteArtwork(artwork.id, user.id);
-      if (preview?.artwork.id === artwork.id) setPreview(null);
+      if (preview?.artwork.id === artwork.id) closeArtworkPreview();
       await refreshArtworks();
       showToast('Artwork deleted from private storage');
     } catch (error) {
@@ -552,6 +549,7 @@ function ProtectionPageContent() {
                     src={previewUrls[artwork.id]}
                     alt={`${artwork.title} protected preview`}
                     settings={settingsByArtwork[artwork.id]}
+                    fitMode="contain"
                     onContextMenuBlocked={() => void handleContextMenuBlocked(artwork)}
                   />
                 ) : (
@@ -567,120 +565,24 @@ function ProtectionPageContent() {
                 )}
               </button>
               <div className="protected-artwork-info">
-                {editingArtwork?.id === artwork.id ? (
-                  <div>
-                    <label className="field-label" htmlFor={`artwork-title-${artwork.id}`}>Title</label>
-                    <input
-                      id={`artwork-title-${artwork.id}`}
-                      className="input-field"
-                      value={editingArtwork.title}
-                      onChange={(event) => setEditingArtwork((current) => current ? { ...current, title: event.target.value, error: undefined } : current)}
-                      disabled={savingMetadataId === artwork.id}
-                      style={{ marginBottom: 10 }}
-                    />
-                    <label className="field-label" htmlFor={`artwork-description-${artwork.id}`}>Description</label>
-                    <textarea
-                      id={`artwork-description-${artwork.id}`}
-                      className="textarea-field"
-                      value={editingArtwork.description}
-                      onChange={(event) => setEditingArtwork((current) => current ? { ...current, description: event.target.value, error: undefined } : current)}
-                      disabled={savingMetadataId === artwork.id}
-                      rows={3}
-                      style={{ marginBottom: 10 }}
-                    />
-                    {editingArtwork.error && <div className="t-xs c-danger" role="alert" style={{ marginBottom: 8 }}>{editingArtwork.error}</div>}
-                    <div className="row gap-8">
-                      <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleSaveMetadata(artwork.id)} disabled={savingMetadataId === artwork.id}>
-                        {savingMetadataId === artwork.id ? 'Saving…' : 'Save'}
-                      </button>
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingArtwork(null)} disabled={savingMetadataId === artwork.id}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="row-between gap-8">
-                      <strong className="t-sm protected-artwork-title">{artwork.title}</strong>
-                      <span className="badge badge-accent">{protectionLabel(artwork.protection_level)}</span>
-                    </div>
-                    {artwork.description && <div className="t-xs c-mid protected-artwork-meta">{artwork.description}</div>}
-                    <div className="t-xs c-low protected-artwork-meta">
-                      {artwork.original_filename} · {artwork.mime_type.replace('image/', '').toUpperCase()} · {formatFileSize(artwork.file_size_bytes)}
-                    </div>
-                    <div className="artwork-publication-control">
-                      <div className="row-between gap-8">
-                        <label className="t-xs c-low" htmlFor={`artwork-visibility-${artwork.id}`}>Publication</label>
-                        <span className="badge badge-accent">{visibilityLabel(artwork.visibility ?? 'private')}</span>
-                      </div>
-                      <select
-                        id={`artwork-visibility-${artwork.id}`}
-                        value={visibilityDrafts[artwork.id] ?? artwork.visibility ?? 'private'}
-                        onChange={(event) => {
-                          setVisibilityDrafts((current) => ({
-                            ...current,
-                            [artwork.id]: event.target.value as ArtworkVisibility,
-                          }));
-                          setVisibilityErrors((current) => ({ ...current, [artwork.id]: '' }));
-                        }}
-                        disabled={savingVisibilityId === artwork.id}
-                      >
-                        <option value="private">Private</option>
-                        <option value="portfolio" disabled={artwork.status !== 'ready' || !artwork.protected_storage_path}>Protected Portfolio</option>
-                        <option value="discover" disabled={artwork.status !== 'ready' || !artwork.protected_storage_path}>Portfolio + Discover</option>
-                      </select>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => void handleSaveVisibility(artwork)}
-                        disabled={
-                          savingVisibilityId === artwork.id
-                          || ((visibilityDrafts[artwork.id] ?? artwork.visibility ?? 'private') === (artwork.visibility ?? 'private'))
-                          || ((visibilityDrafts[artwork.id] ?? artwork.visibility ?? 'private') !== 'private'
-                            && (artwork.status !== 'ready' || !artwork.protected_storage_path))
-                        }
-                      >
-                        {savingVisibilityId === artwork.id ? 'Saving…' : 'Save publication'}
-                      </button>
-                      {artwork.status !== 'ready' && (
-                        <span className="t-xs c-low">Publishing is available after protection is ready.</span>
-                      )}
-                      {visibilityErrors[artwork.id] && (
-                        <span className="t-xs protection-artwork-error" role="alert">{visibilityErrors[artwork.id]}</span>
-                      )}
-                    </div>
-                    <div className="row-between protected-artwork-meta">
-                      <span className="t-xs c-low">Uploaded {formatArtworkDate(artwork.created_at)}</span>
-                      <span className={`t-xs${artwork.status === 'failed' || (artwork.status === 'ready' && previewUnavailableIds.has(artwork.id)) ? ' protection-artwork-error' : artwork.status === 'ready' ? ' c-success' : ' c-low'}`}>
-                        {artwork.status === 'original_uploaded' ? 'Uploaded' : artwork.status === 'processing' ? 'Processing' : artwork.status === 'ready' && !previewUnavailableIds.has(artwork.id) ? 'Protected / Ready' : artwork.status === 'ready' ? 'Protected preview unavailable' : 'Protection Failed'}
-                      </span>
-                    </div>
-                    {artwork.status === 'ready' && settingsByArtwork[artwork.id] && (
-                      <div className="t-xs c-low protected-artwork-meta">
-                        Delivery: {settingsByArtwork[artwork.id].canvas_tiling ? 'tiled canvas' : 'protected image'}
-                        {settingsByArtwork[artwork.id].right_click_shield ? ' · right-click shield' : ''}
-                      </div>
-                    )}
-                    <div className="protected-artwork-actions">
-                      <button
-                        type="button"
-                        className="link-sm"
-                        onClick={() => setEditingArtwork({ id: artwork.id, title: artwork.title, description: artwork.description ?? '' })}
-                        disabled={savingMetadataId !== null || deletingId === artwork.id}
-                      >
-                        Edit
-                      </button>
-                      {artwork.status === 'failed' && (
-                        <button type="button" className="link-sm" onClick={() => void handleRetryProtection(artwork)} disabled={processingArtworkId === artwork.id || deletingId === artwork.id}>
-                          {processingArtworkId === artwork.id ? 'Retrying…' : 'Retry protection'}
-                        </button>
-                      )}
-                      <button type="button" className="link-sm protected-artwork-delete" onClick={() => void handleDelete(artwork)} disabled={deletingId === artwork.id || processingArtworkId === artwork.id}>
-                        {deletingId === artwork.id ? 'Deleting…' : 'Delete'}
-                      </button>
-                    </div>
-                  </>
-                )}
+                <div className="protected-artwork-card-heading">
+                  <strong className="t-sm protected-artwork-title">{artwork.title}</strong>
+                  <span className="badge badge-accent">{protectionLabel(artwork.protection_level)}</span>
+                </div>
+                <div className="t-xs c-low protected-artwork-meta">
+                  {artwork.original_filename} · {artwork.mime_type.replace('image/', '').toUpperCase()} · {formatFileSize(artwork.file_size_bytes)}
+                </div>
+                <div className={`t-xs protected-artwork-status ${artwork.status === 'ready' ? 'c-success' : artwork.status === 'failed' ? 'protection-artwork-error' : 'c-low'}`}>
+                  {artwork.status === 'ready' ? 'Protected / Ready' : artwork.status === 'processing' ? 'Processing' : artwork.status === 'failed' ? 'Protection Failed' : 'Uploaded'}
+                </div>
+                <button
+                  type="button"
+                  className="protected-artwork-open"
+                  onClick={() => void openArtwork(artwork)}
+                  disabled={previewLoadingId === artwork.id}
+                >
+                  {previewLoadingId === artwork.id ? 'Loading…' : 'Open preview'}
+                </button>
               </div>
             </article>
           ))}
@@ -688,16 +590,123 @@ function ProtectionPageContent() {
       )}
       {previewError && <div className="card t-xs protection-artwork-error" role="alert">{previewError}</div>}
       {preview && (
-        <div className="protected-artwork-modal-backdrop" role="presentation" onClick={() => setPreview(null)}>
-          <section className="protected-artwork-modal ag-liquid-glass-strong" role="dialog" aria-modal="true" aria-label={preview.artwork.title} onClick={(event) => event.stopPropagation()}>
-            <div className="row-between gap-10" style={{ marginBottom: 12 }}>
-              <span className="t-sm fw-700">{preview.artwork.title}</span>
-              <button type="button" className="link-sm" onClick={() => setPreview(null)}>Close</button>
+        <section className="protected-artwork-detail" aria-label={`${preview.artwork.title} preview and details`}>
+          <button type="button" className="protected-artwork-back" onClick={closeArtworkPreview}>
+            <Icon name="chevron-l" />
+            Back to Protected Artworks
+          </button>
+          <div className="protected-artwork-detail-header">
+            <div>
+              <span className="t-xs c-low">Protected artwork</span>
+              <h2>{preview.artwork.title}</h2>
             </div>
-            <img src={preview.url} alt={preview.artwork.title} />
-            <div className="t-xs c-low" style={{ marginTop: 10 }}>Authorized preview link expires shortly.</div>
-          </section>
-        </div>
+            <span className="badge badge-accent">{protectionLabel(preview.artwork.protection_level)}</span>
+          </div>
+          <div className="protected-artwork-detail-layout">
+            <div className="protected-artwork-detail-preview">
+              <ProtectedArtworkDisplay
+                src={preview.url}
+                alt={`${preview.artwork.title} large protected preview`}
+                settings={settingsByArtwork[preview.artwork.id]}
+                fitMode="contain"
+                onContextMenuBlocked={() => void handleContextMenuBlocked(preview.artwork)}
+              />
+            </div>
+            <aside className="protected-artwork-detail-panel" aria-label="Artwork details">
+              {editingArtwork?.id === preview.artwork.id ? (
+                <div className="protected-artwork-edit-form">
+                  <label className="field-label" htmlFor={`detail-artwork-title-${preview.artwork.id}`}>Title</label>
+                  <input
+                    id={`detail-artwork-title-${preview.artwork.id}`}
+                    className="input-field"
+                    value={editingArtwork.title}
+                    onChange={(event) => setEditingArtwork((current) => current ? { ...current, title: event.target.value, error: undefined } : current)}
+                    disabled={savingMetadataId === preview.artwork.id}
+                  />
+                  <label className="field-label" htmlFor={`detail-artwork-description-${preview.artwork.id}`}>Description</label>
+                  <textarea
+                    id={`detail-artwork-description-${preview.artwork.id}`}
+                    className="textarea-field"
+                    value={editingArtwork.description}
+                    onChange={(event) => setEditingArtwork((current) => current ? { ...current, description: event.target.value, error: undefined } : current)}
+                    disabled={savingMetadataId === preview.artwork.id}
+                    rows={4}
+                  />
+                  {editingArtwork.error && <div className="t-xs c-danger" role="alert">{editingArtwork.error}</div>}
+                  <div className="protected-artwork-detail-actions">
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleSaveMetadata(preview.artwork.id)} disabled={savingMetadataId === preview.artwork.id}>
+                      {savingMetadataId === preview.artwork.id ? 'Saving…' : 'Save'}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingArtwork(null)} disabled={savingMetadataId === preview.artwork.id}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <dl className="protected-artwork-detail-meta">
+                    <div><dt>File name</dt><dd>{preview.artwork.original_filename}</dd></div>
+                    <div><dt>Format</dt><dd>{preview.artwork.mime_type.replace('image/', '').toUpperCase()}</dd></div>
+                    <div><dt>File size</dt><dd>{formatFileSize(preview.artwork.file_size_bytes)}</dd></div>
+                    <div><dt>Status</dt><dd className={preview.artwork.status === 'ready' ? 'c-success' : preview.artwork.status === 'failed' ? 'protection-artwork-error' : 'c-low'}>{preview.artwork.status === 'ready' ? 'Protected / Ready' : preview.artwork.status === 'processing' ? 'Processing' : preview.artwork.status === 'failed' ? 'Protection Failed' : 'Uploaded'}</dd></div>
+                  </dl>
+                  <div className="protected-artwork-publication">
+                    <div className="row-between gap-8">
+                      <span className="t-sm fw-700">Publication</span>
+                      <span className="badge badge-accent">{visibilityLabel(visibilityDrafts[preview.artwork.id] ?? preview.artwork.visibility ?? 'private')}</span>
+                    </div>
+                    <select
+                      aria-label="Artwork publication"
+                      value={visibilityDrafts[preview.artwork.id] ?? preview.artwork.visibility ?? 'private'}
+                      onChange={(event) => {
+                        setVisibilityDrafts((current) => ({ ...current, [preview.artwork.id]: event.target.value as ArtworkVisibility }));
+                        setVisibilityErrors((current) => ({ ...current, [preview.artwork.id]: '' }));
+                      }}
+                      disabled={savingVisibilityId === preview.artwork.id}
+                    >
+                      <option value="private">Private</option>
+                      <option value="portfolio" disabled={preview.artwork.status !== 'ready' || !preview.artwork.protected_storage_path}>Protected Portfolio</option>
+                      <option value="discover" disabled={preview.artwork.status !== 'ready' || !preview.artwork.protected_storage_path}>Portfolio + Discover</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => void handleSaveVisibility(preview.artwork)}
+                      disabled={
+                        savingVisibilityId === preview.artwork.id
+                        || ((visibilityDrafts[preview.artwork.id] ?? preview.artwork.visibility ?? 'private') === (preview.artwork.visibility ?? 'private'))
+                        || ((visibilityDrafts[preview.artwork.id] ?? preview.artwork.visibility ?? 'private') !== 'private'
+                          && (preview.artwork.status !== 'ready' || !preview.artwork.protected_storage_path))
+                      }
+                    >
+                      {savingVisibilityId === preview.artwork.id ? 'Saving…' : 'Save publication'}
+                    </button>
+                    {visibilityErrors[preview.artwork.id] && <div className="t-xs protection-artwork-error" role="alert">{visibilityErrors[preview.artwork.id]}</div>}
+                  </div>
+                  <div className="protected-artwork-detail-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setEditingArtwork({ id: preview.artwork.id, title: preview.artwork.title, description: preview.artwork.description ?? '' })}
+                      disabled={savingMetadataId !== null || deletingId === preview.artwork.id}
+                    >
+                      Edit
+                    </button>
+                    {preview.artwork.status === 'failed' && (
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleRetryProtection(preview.artwork)} disabled={processingArtworkId === preview.artwork.id || deletingId === preview.artwork.id}>
+                        {processingArtworkId === preview.artwork.id ? 'Retrying…' : 'Retry protection'}
+                      </button>
+                    )}
+                    <button type="button" className="btn btn-ghost btn-sm protected-artwork-delete" onClick={() => void handleDelete(preview.artwork)} disabled={deletingId === preview.artwork.id || processingArtworkId === preview.artwork.id}>
+                      {deletingId === preview.artwork.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </aside>
+          </div>
+          <div className="t-xs c-low protected-artwork-detail-expiry">Authorized preview link expires shortly.</div>
+        </section>
       )}
 
       <section className="protection-settings-card" aria-labelledby="protection-settings-title">
